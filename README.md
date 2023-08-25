@@ -1,1 +1,1 @@
-# Alpha1
+# AlgoTrade

@@ -1,0 +1,9 @@
+{
+    "username": "51349121",
+    "password": "VIguS1Ui",
+    "server": "ICMarketsSC-Demo",
+    "mt5Pathway": "C:/Program Files/MetaTrader 5 IC Markets (SC)/terminal64.exe",
+    "symbols": ["USDJPY"],
+    "timeframe": "M30",
+    "pip_size": 0.01
+}
