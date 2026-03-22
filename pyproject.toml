@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alpha1"
+version = "0.1.0"
+description = "Intraday multi-timeframe FVG backtesting system"
+readme = "AGENTS.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "matplotlib>=3.7.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["alpha1*"]
+exclude = ["tests*", "configs*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "C4", "SIM", "RUF"]
+ignore = []
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --cov=alpha1 --cov-report=term-missing"
+testpaths = [
+    "tests",
+]
+pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["alpha1"]
+omit = [
+    "alpha1/analysis/*",
+    "tests/*",
+    "alpha1/__main__.py"
+]
+
+[tool.coverage.report]
+# portfolio_multi.py is integration-level; its loop only fires with real signal data.
+# Component unit tests cover initialization and contracts; integration is run_portfolio.py.
+fail_under = 65

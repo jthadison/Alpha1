@@ -1,0 +1,36 @@
+{
+    "session": {
+        "asian_start": "00:00",
+        "asian_end": "07:00",
+        "london_start": "08:00",
+        "london_end": "12:00",
+        "ny_start": "13:00",
+        "ny_end": "17:00",
+        "timezone": "Europe/London"
+    },
+    "entry": {
+        "min_gap_atr_ratio": 0.5,
+        "displacement_body_multiplier": 1.5,
+        "atr_period": 14,
+        "swing_lookback": 2,
+        "entry_cutoff_minutes_before_close": 90,
+        "use_ema_bias": true,
+        "ema_period": 50,
+        "limit_order_timeout_bars": 50
+    },
+    "exit": {
+        "stop_buffer_ticks": 2,
+        "breakeven_at_r": 0.0,
+        "target_min_rr": 1.5,
+        "close_at_session_end": false
+    },
+    "risk": {
+        "risk_per_trade_pct": 1.0,
+        "max_trades_per_session": 2
+    },
+    "backtest": {
+        "start_date": "2020-01-01",
+        "end_date": "2025-01-01",
+        "initial_equity": 100000.0
+    }
+}

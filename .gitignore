@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+env/
+venv/
+.env
+.venv/
+
+# Testing / tooling
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Data — raw CSV files are large (>1 GB total); not tracked in git.
+# Users supply their own OHLCV data. See AGENTS.md for expected format.
+data/
+output/
+
+# User-specific configs (default.json is tracked; user overrides are not)
+configs/*.json
+!configs/default.json
+
+# Logs
+*.log
