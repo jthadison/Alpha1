@@ -555,18 +555,29 @@ class LiveEngine:
         Records fill price and schedules session-end exit if configured.
         Pass naked=True when the bracket children were already cancelled (TOCTOU race).
         """
-        # Guard: if we somehow receive two fills for the same symbol, cancel the
-        # duplicate rather than overwriting an already-tracked position.
+        # Guard: if we somehow receive two fills for the same symbol, the second
+        # order's contracts are now live at IBKR with no tracking.  Close them
+        # immediately and record FILLED (not CANCELLED) — the order did execute.
         if symbol in self._positions:
-            log.warning(
-                "%s: fill on %s but position already tracked — cancelling duplicate bracket.",
+            log.critical(
+                "%s: duplicate fill on order %s (%.1f contracts) while position already tracked. "
+                "Closing orphaned contracts via market order. "
+                "Check IBKR account for residual exposure.",
                 symbol,
                 po.id,
+                po.size,
             )
+            # Close the orphaned filled contracts immediately.
             if not naked:
                 self.broker.cancel_order(po.tp_trade)
                 self.broker.cancel_order(po.sl_trade)
-            await self.state.update_pending_order_status(po.id, "CANCELLED")
+            self.broker.close_position_market(symbol, po.signal.direction, po.size)
+            # Mark FILLED (not CANCELLED) — the parent order did execute.
+            await self.state.update_pending_order_status(po.id, "FILLED")
+            self._emit_event(
+                "duplicate_fill_closed",
+                {"symbol": symbol, "id": po.id, "size": po.size},
+            )
             return
 
         fill_price = po.parent_trade.orderStatus.avgFillPrice
@@ -864,7 +875,14 @@ class LiveEngine:
         else:
             expected_exit = pos.target_price if reason == "TARGET" else pos.stop_price
             exit_slippage = exit_price - expected_exit
-        fill_slippage_entry = pos.entry_price - pos.limit_entry_price
+        # Positive = execution was WORSE than the limit (direction-normalised).
+        # LONG  limit buy:  we want fill <= limit; positive means paid more than asked (bad).
+        # SHORT limit sell: we want fill >= limit; positive means received less than asked (bad).
+        if pos.direction == "LONG":
+            fill_slippage_entry = pos.entry_price - pos.limit_entry_price
+        else:
+            fill_slippage_entry = pos.limit_entry_price - pos.entry_price
+        # Recovered positions have limit_entry_price == entry_price, so slippage is 0 regardless.
 
         await self.state.save_trade(
             TradeRecord(
@@ -983,6 +1001,7 @@ class LiveEngine:
                 size=size,
                 sl_trade=sl_trade,
                 tp_trade=tp_trade,
+                limit_entry_price=entry_price,  # unknown after crash recovery; set to fill to record 0 slippage
             )
             bracket = f"sl={'found' if sl_trade else 'NONE'}  tp={'found' if tp_trade else 'NONE'}"
             log.info(

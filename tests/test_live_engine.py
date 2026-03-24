@@ -780,3 +780,139 @@ class TestReviewFindings:
 
         mock_gen.assert_not_called()
         broker.place_bracket.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # Adversarial review findings (batch 2)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_recovered_position_has_zero_entry_slippage(self):
+        """Recovered position: limit_entry_price == entry_price → fill_slippage_entry == 0."""
+        engine, broker, _ = _make_engine()
+
+        ibkr_pos = _make_ibkr_position("MYM", qty=1.0, avg_cost=23400.0, multiplier=0.5)
+        broker.get_positions.return_value = [ibkr_pos]
+
+        from alpha1.live.state import OpenPositionRecord
+
+        db_pos = OpenPositionRecord(
+            id="pos-slippage",
+            instrument="MYM",
+            direction="LONG",
+            entry_price=46800.0,
+            entry_time="2026-03-23T14:45:00+00:00",
+            stop_price=46600.0,
+            initial_stop_price=46600.0,
+            target_price=47100.0,
+            size=1.0,
+        )
+        engine.state.get_open_positions = AsyncMock(return_value=[db_pos])
+        engine.state.get_pending_orders = AsyncMock(return_value=[])
+
+        await engine._recover_state()
+
+        pos = engine._positions["MYM"]
+        # Trigger _record_completed_trade and inspect the save_trade call
+        await engine._record_completed_trade(pos, 47100.0, "TARGET")
+
+        call_kwargs = engine.state.save_trade.call_args[0][0]
+        assert call_kwargs.fill_slippage_entry == pytest.approx(0.0)
+
+    @pytest.mark.asyncio
+    async def test_duplicate_fill_closes_orphaned_contracts(self):
+        """Second fill on same symbol → close_position_market called, status FILLED (not CANCELLED)."""
+        engine, broker, _ = _make_engine()
+
+        sig1 = _make_signal(ts=pd.Timestamp("2026-03-23 14:55:00", tz="UTC"))
+        po1 = PendingOrder(
+            id="po-first",
+            symbol="MYM",
+            signal=sig1,
+            size=2.0,
+            actual_stop=95.0,
+            parent_trade=_make_order(10, "Filled", 100.0),
+            tp_trade=_make_order(11, "Submitted"),
+            sl_trade=_make_order(12, "Submitted"),
+            placed_at=datetime.now(UTC),
+        )
+        sig2 = _make_signal(entry_price=101.0, ts=pd.Timestamp("2026-03-23 14:55:00", tz="UTC"))
+        po2 = PendingOrder(
+            id="po-second",
+            symbol="MYM",
+            signal=sig2,
+            size=3.0,
+            actual_stop=94.0,
+            parent_trade=_make_order(20, "Filled", 101.0),
+            tp_trade=_make_order(21, "Submitted"),
+            sl_trade=_make_order(22, "Submitted"),
+            placed_at=datetime.now(UTC),
+        )
+
+        # Process first fill normally to create the position
+        await engine._handle_fill("MYM", po1)
+        assert "MYM" in engine._positions
+
+        # Process second fill — must not overwrite position
+        engine.state.update_pending_order_status.reset_mock()
+        await engine._handle_fill("MYM", po2)
+
+        # Orphaned contracts must be closed immediately
+        broker.close_position_market.assert_called_once_with("MYM", sig2.direction, po2.size)
+
+        # DB status must be FILLED, not CANCELLED
+        engine.state.update_pending_order_status.assert_called_once_with("po-second", "FILLED")
+
+        # Original position must be untouched
+        assert engine._positions["MYM"].id == "po-first"
+
+    @pytest.mark.asyncio
+    async def test_short_entry_slippage_sign(self):
+        """SHORT filled BELOW limit (bad) → fill_slippage_entry positive (= limit - fill)."""
+        engine, _broker, _ = _make_engine()
+
+        pos = OpenPosition(
+            id="pos-short",
+            symbol="MYM",
+            direction="SHORT",
+            entry_price=99.0,  # filled below limit — BAD for a short sell
+            limit_entry_price=100.0,
+            entry_time=datetime.now(UTC),
+            stop_price=105.0,
+            initial_stop_price=105.0,
+            target_price=90.0,
+            size=1.0,
+            sl_trade=None,
+            tp_trade=None,
+        )
+
+        await engine._record_completed_trade(pos, 90.0, "TARGET")
+
+        call_kwargs = engine.state.save_trade.call_args[0][0]
+        # limit(100) - fill(99) = 1.0  → positive = worse execution
+        assert call_kwargs.fill_slippage_entry == pytest.approx(1.0)
+
+    @pytest.mark.asyncio
+    async def test_long_entry_slippage_sign(self):
+        """LONG filled ABOVE limit (bad) → fill_slippage_entry positive (= fill - limit)."""
+        engine, _broker, _ = _make_engine()
+
+        pos = OpenPosition(
+            id="pos-long",
+            symbol="MYM",
+            direction="LONG",
+            entry_price=101.0,  # filled above limit — BAD for a long buy
+            limit_entry_price=100.0,
+            entry_time=datetime.now(UTC),
+            stop_price=95.0,
+            initial_stop_price=95.0,
+            target_price=110.0,
+            size=1.0,
+            sl_trade=None,
+            tp_trade=None,
+        )
+
+        await engine._record_completed_trade(pos, 110.0, "TARGET")
+
+        call_kwargs = engine.state.save_trade.call_args[0][0]
+        # fill(101) - limit(100) = 1.0  → positive = worse execution
+        assert call_kwargs.fill_slippage_entry == pytest.approx(1.0)

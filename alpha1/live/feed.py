@@ -73,6 +73,7 @@ class LiveFeed:
         self._callbacks: list[Callable[[str, dict[str, pd.DataFrame]], None]] = []
         self._running = True
         self._subscribe_count: int = 0  # tracks subscription order for poll staggering
+        self._poll_offsets: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -114,11 +115,12 @@ class LiveFeed:
             self._last_bar_ts.get(symbol),
         )
 
-        # Stagger poll starts: 2-second offset per instrument to avoid simultaneous
-        # reqHistoricalDataAsync calls through the single IB socket.
+        # Stagger poll starts: 2-second offset per instrument. Stored on the instance
+        # so the offset is applied inside the loop on every cycle, not just the first.
         offset = self._subscribe_count * 2
         self._subscribe_count += 1
-        task = asyncio.create_task(self._poll_loop(symbol, contract, what, offset_secs=offset))
+        self._poll_offsets[symbol] = float(offset)
+        task = asyncio.create_task(self._poll_loop(symbol, contract, what))
         self._poll_tasks[symbol] = task
 
     def get_data_dict(self, symbol: str) -> dict[str, pd.DataFrame] | None:
@@ -142,25 +144,27 @@ class LiveFeed:
     # Poll loop
     # ------------------------------------------------------------------
 
-    async def _poll_loop(self, symbol: str, contract, what: str, offset_secs: float = 0.0) -> None:
+    async def _poll_loop(self, symbol: str, contract, what: str) -> None:
         """
         Sleep until each 5M bar close + buffer, then fetch the latest bars.
 
         Aligns to 5-minute boundaries on the UTC clock (00:00, 00:05, 00:10…)
         so we don't drift relative to IBKR's bar close times.
+
+        The per-instrument offset (self._poll_offsets[symbol]) is added to every
+        sleep, permanently staggering instruments on every poll cycle.
         """
-        if offset_secs > 0:
-            log.debug("%s: poll start staggered by %.0f s.", symbol, offset_secs)
-            await asyncio.sleep(offset_secs)
-        log.info("%s: poll loop started.", symbol)
+        offset_secs = self._poll_offsets.get(symbol, 0.0)
+        log.info("%s: poll loop started (stagger offset=%.0f s).", symbol, offset_secs)
         while self._running:
             try:
-                sleep_secs = self._secs_until_next_bar_close()
+                sleep_secs = self._secs_until_next_bar_close() + offset_secs
                 log.debug(
-                    "%s: next poll in %.0f s (at next 5M boundary + %d s buffer).",
+                    "%s: next poll in %.0f s (boundary + %d s buffer + %.0f s stagger).",
                     symbol,
                     sleep_secs,
                     _POLL_BUFFER_SECS,
+                    offset_secs,
                 )
                 await asyncio.sleep(sleep_secs)
 

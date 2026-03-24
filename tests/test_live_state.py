@@ -342,3 +342,58 @@ async def test_init_db_twice_closes_first_connection():
     orders = await sm.get_pending_orders()
     assert len(orders) == 1
     assert orders[0].id == "leak-check"
+
+
+# ---------------------------------------------------------------------------
+# Fill quality: TIME_EXIT entry slippage is included; exit slippage is excluded
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fill_quality_summary_time_exit_entry_slippage_included():
+    """Entry slippage for TIME_EXIT trades must be included in the average.
+
+    fill_slippage_entry is set at entry time; the exit reason is irrelevant to
+    whether that fill was good or bad.  Filtering it out would bias the metric.
+    """
+    sm = await _fresh_sm()
+
+    stop_trade = _make_trade()
+    stop_trade.exit_reason = "STOP_LOSS"
+    stop_trade.fill_slippage_entry = 5.0
+
+    time_trade = _make_trade()
+    time_trade.exit_reason = "TIME_EXIT"
+    time_trade.fill_slippage_entry = 3.0
+
+    await sm.save_trade(stop_trade)
+    await sm.save_trade(time_trade)
+
+    summary = await sm.get_fill_quality_summary()
+    # Both trades contribute: (5.0 + 3.0) / 2 == 4.0
+    assert summary["avg_entry_slippage"] == pytest.approx(4.0)
+
+
+@pytest.mark.asyncio
+async def test_fill_quality_summary_time_exit_exit_slippage_excluded():
+    """Exit slippage for TIME_EXIT trades must be excluded from the average.
+
+    TIME_EXIT sets fill_slippage_exit to 0.0 as a sentinel (no real measurement).
+    Including it would dilute the metric with a fictitious zero.
+    """
+    sm = await _fresh_sm()
+
+    stop_trade = _make_trade()
+    stop_trade.exit_reason = "STOP_LOSS"
+    stop_trade.fill_slippage_exit = 8.0
+
+    time_trade = _make_trade()
+    time_trade.exit_reason = "TIME_EXIT"
+    time_trade.fill_slippage_exit = 0.0  # sentinel, not a real measurement
+
+    await sm.save_trade(stop_trade)
+    await sm.save_trade(time_trade)
+
+    summary = await sm.get_fill_quality_summary()
+    # Only STOP_LOSS contributes: ABS(8.0) == 8.0
+    assert summary["avg_exit_slippage"] == pytest.approx(8.0)

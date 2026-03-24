@@ -355,7 +355,7 @@ class StateManager:
             """
             SELECT
                 COUNT(*)                                                          AS total_trades,
-                AVG(CASE WHEN exit_reason != 'TIME_EXIT' THEN fill_slippage_entry END) AS avg_entry_slippage,
+                AVG(fill_slippage_entry)                                                   AS avg_entry_slippage,
                 AVG(CASE WHEN exit_reason != 'TIME_EXIT' THEN ABS(fill_slippage_exit) END) AS avg_exit_slippage,
                 SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END)                        AS winners,
                 AVG(r_multiple)                                                  AS avg_r,
