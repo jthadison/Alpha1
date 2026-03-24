@@ -1,6 +1,8 @@
 import pandas as pd
 import pytest
+
 from alpha1.data.types import validate_ohlcv
+
 
 def test_validate_ohlcv_missing_cols():
     df = pd.DataFrame({"open": [1]})
@@ -13,7 +15,7 @@ def test_validate_ohlcv_no_tz():
     df.index = pd.DatetimeIndex(["2024-01-01"])  # No tz
     with pytest.raises(ValueError, match="timezone-aware"):
         validate_ohlcv(df)
-        
+
 def test_validate_ohlcv_nan():
     df = pd.DataFrame({"open": [1], "high": [float('nan')], "low": [1], "close": [1], "volume": [1]})
     df.index = pd.DatetimeIndex(["2024-01-01"], tz="UTC")

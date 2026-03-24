@@ -33,7 +33,7 @@ from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -186,6 +186,15 @@ def create_app(
     async def api_trades(instrument: str | None = None, limit: int = 100):
         trades = await state.get_trade_history(instrument=instrument, limit=min(limit, 500))
         return [_record_to_dict(t) for t in trades]
+
+    @app.put("/api/trades/{trade_id}/journal")
+    async def update_trade_journal(
+        trade_id: int,
+        notes: str | None = Body(default=None),
+        tags: str | None = Body(default=None),
+    ):
+        await state.update_trade_notes(trade_id, notes, tags)
+        return {"ok": True}
 
     @app.get("/api/metrics")
     async def api_metrics():

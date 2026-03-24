@@ -1,7 +1,6 @@
 from alpha1.strategy.market_structure import Bias, classify_structure
 from tests.conftest import create_ohlcv
 
-
 # Helper: bar tuples are (open, high, low, close)
 
 

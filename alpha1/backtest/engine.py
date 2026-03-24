@@ -15,7 +15,6 @@ This replaces the old close-based retrace trigger which was proven to destroy
 the 62 % win rate present at the FVG midpoint.
 """
 import logging
-from typing import Optional
 
 import pandas as pd
 
@@ -60,7 +59,7 @@ def run_backtest(
     times  = df.index
 
     # State
-    open_trade: Optional[Trade] = None
+    open_trade: Trade | None = None
     pending_limits: list[dict] = []   # [{"signal": Signal, "formed_bar": int}, ...]
     trades_this_session: int = 0
     current_session: SessionType = session_types[0]
@@ -88,12 +87,15 @@ def run_backtest(
 
             sl_hit = tp_hit = False
             if open_trade.direction == "LONG":
-                if lows[i]  <= open_trade.stop_price:   sl_hit = True
-                if highs[i] >= open_trade.target_price: tp_hit = True
+                if lows[i] <= open_trade.stop_price:
+                    sl_hit = True
+                if highs[i] >= open_trade.target_price:
+                    tp_hit = True
             else:
-                if highs[i] >= open_trade.stop_price:   sl_hit = True
-                if lows[i]  <= open_trade.target_price: tp_hit = True
-
+                if highs[i] >= open_trade.stop_price:
+                    sl_hit = True
+                if lows[i] <= open_trade.target_price:
+                    tp_hit = True
             # Ambiguous bar (both hit): SL wins — conservative
             if sl_hit:
                 exit_px = (
@@ -114,8 +116,9 @@ def run_backtest(
                     if open_trade.direction == "LONG"
                     else min(open_trade.target_price, opens[i])
                 )
-                portfolio.close_trade(open_trade, times[i], exit_px, ExitReason.TARGET, open_trade.bars_held, instrument)
-                open_trade = None
+                portfolio.close_trade(
+                    open_trade, times[i], exit_px, ExitReason.TARGET, open_trade.bars_held, instrument
+                )
 
             # Breakeven management
             if open_trade and config.exit.breakeven_at_r > 0:
@@ -123,13 +126,19 @@ def run_backtest(
                     risk = open_trade.entry_price_raw - open_trade.initial_stop_price
                     if risk > 0:
                         current_r = (highs[i] - open_trade.entry_price_raw) / risk
-                        if current_r >= config.exit.breakeven_at_r and open_trade.stop_price < open_trade.entry_price_raw:
+                        if (
+                            current_r >= config.exit.breakeven_at_r
+                            and open_trade.stop_price < open_trade.entry_price_raw
+                        ):
                             open_trade.stop_price = open_trade.entry_price_raw
                 else:
                     risk = open_trade.initial_stop_price - open_trade.entry_price_raw
                     if risk > 0:
                         current_r = (open_trade.entry_price_raw - lows[i]) / risk
-                        if current_r >= config.exit.breakeven_at_r and open_trade.stop_price > open_trade.entry_price_raw:
+                        if (
+                            current_r >= config.exit.breakeven_at_r
+                            and open_trade.stop_price > open_trade.entry_price_raw
+                        ):
                             open_trade.stop_price = open_trade.entry_price_raw
 
         # ── 2. Queue new pending limits from signals formed on bar i-1 ────

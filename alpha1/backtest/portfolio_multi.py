@@ -80,7 +80,7 @@ def run_portfolio_backtest(
     session_type_cache: dict[str, SessionType] = {}
 
     # ── Bar-by-bar loop ───────────────────────────────────────────────────────
-    for ts_idx, ts in enumerate(all_ts):
+    for ts in all_ts:
 
         # ── 1. Process exits for all open positions ───────────────────────────
         for sym in list(open_positions.keys()):
@@ -101,11 +101,15 @@ def run_portfolio_backtest(
 
             sl_hit = tp_hit = False
             if trade.direction == "LONG":
-                if bar["low"]  <= trade.stop_price:   sl_hit = True
-                if bar["high"] >= trade.target_price: tp_hit = True
+                if bar["low"] <= trade.stop_price:
+                    sl_hit = True
+                if bar["high"] >= trade.target_price:
+                    tp_hit = True
             else:
-                if bar["high"] >= trade.stop_price:   sl_hit = True
-                if bar["low"]  <= trade.target_price: tp_hit = True
+                if bar["high"] >= trade.stop_price:
+                    sl_hit = True
+                if bar["low"] <= trade.target_price:
+                    tp_hit = True
 
             if sl_hit:
                 exit_px = (

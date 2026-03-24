@@ -7,7 +7,12 @@ import pandas as pd
 from alpha1.backtest.portfolio import Trade
 
 
-def plot_dashboard(trades: list[Trade], equity_curve: list[float], equity_dates: list[pd.Timestamp], out_dir: str = "output"):
+def plot_dashboard(
+    trades: list[Trade],
+    equity_curve: list[float],
+    equity_dates: list[pd.Timestamp],
+    out_dir: str = "output",
+):
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
@@ -69,7 +74,8 @@ def plot_dashboard(trades: list[Trade], equity_curve: list[float], equity_dates:
         plt.colorbar(label='Return (%)')
         plt.title("Monthly Returns Heatmap")
         plt.yticks(range(len(pivot.index)), pivot.index)
-        plt.xticks(range(len(pivot.columns)), ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][:len(pivot.columns)])
+        months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        plt.xticks(range(len(pivot.columns)), months[:len(pivot.columns)])
 
         # Add text annotations
         for i in range(len(pivot.index)):

@@ -1,4 +1,3 @@
-import pandas as pd
 import pytest
 
 from alpha1.backtest.portfolio_multi import run_portfolio_backtest

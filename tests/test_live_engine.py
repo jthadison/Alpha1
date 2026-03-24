@@ -916,3 +916,132 @@ class TestReviewFindings:
         call_kwargs = engine.state.save_trade.call_args[0][0]
         # fill(101) - limit(100) = 1.0  → positive = worse execution
         assert call_kwargs.fill_slippage_entry == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Journal -- MFE/MAE tracking, session label, trade completion fields
+# ---------------------------------------------------------------------------
+
+
+class TestJournal:
+    """MFE/MAE excursion tracking and journal field population."""
+
+    def _make_position(
+        self,
+        direction: str = "LONG",
+        entry_price: float = 100.0,
+        stop_price: float = 95.0,
+        mfe_price: float | None = None,
+        mae_price: float | None = None,
+    ) -> OpenPosition:
+        return OpenPosition(
+            id="p-journal",
+            symbol="MYM",
+            direction=direction,
+            entry_price=entry_price,
+            entry_time=datetime.now(UTC),
+            stop_price=stop_price,
+            initial_stop_price=stop_price,
+            target_price=115.0 if direction == "LONG" else 85.0,
+            size=1.0,
+            sl_trade=None,
+            tp_trade=None,
+            mfe_price=mfe_price if mfe_price is not None else entry_price,
+            mae_price=mae_price if mae_price is not None else entry_price,
+        )
+
+    def test_mfe_mae_long_updates_correctly(self):
+        engine, _, _ = _make_engine()
+        pos = self._make_position(direction="LONG", entry_price=100.0)
+        engine._positions["MYM"] = pos
+        df = _make_ohlcv(10)
+        df.iloc[-1, df.columns.get_loc("high")] = 105.0
+        df.iloc[-1, df.columns.get_loc("low")] = 98.0
+        engine._update_mfe_mae("MYM", df)
+        assert pos.mfe_price == pytest.approx(105.0)
+        assert pos.mae_price == pytest.approx(98.0)
+
+    def test_mfe_mae_short_updates_correctly(self):
+        engine, _, _ = _make_engine()
+        pos = self._make_position(direction="SHORT", entry_price=100.0, stop_price=105.0)
+        engine._positions["MYM"] = pos
+        df = _make_ohlcv(10)
+        df.iloc[-1, df.columns.get_loc("high")] = 103.0
+        df.iloc[-1, df.columns.get_loc("low")] = 95.0
+        engine._update_mfe_mae("MYM", df)
+        assert pos.mfe_price == pytest.approx(95.0)  # LOW is favourable for SHORT
+        assert pos.mae_price == pytest.approx(103.0)  # HIGH is adverse for SHORT
+
+    @pytest.mark.asyncio
+    async def test_mfe_mae_initialised_at_fill(self):
+        engine, _, _ = _make_engine()
+        fill_price = 101.5
+        sig = _make_signal(ts=pd.Timestamp("2026-03-23 14:55:00", tz="UTC"))
+        po = PendingOrder(
+            id="po-fill",
+            symbol="MYM",
+            signal=sig,
+            size=2.0,
+            actual_stop=95.0,
+            parent_trade=_make_order(10, "Filled", fill_price),
+            tp_trade=_make_order(11, "Submitted"),
+            sl_trade=_make_order(12, "Submitted"),
+            placed_at=datetime.now(UTC),
+        )
+        await engine._handle_fill("MYM", po)
+        pos = engine._positions["MYM"]
+        assert pos.mfe_price == pytest.approx(fill_price)
+        assert pos.mae_price == pytest.approx(fill_price)
+
+    def test_session_label_london(self):
+        """09:30 London time falls within London session (08:00-12:00 London)."""
+        from zoneinfo import ZoneInfo
+
+        engine, _, _ = _make_engine()
+        london_tz = ZoneInfo("Europe/London")
+        # 2026-03-23 is before UK DST (starts 2026-03-29) -- London == UTC
+        dt = datetime(2026, 3, 23, 9, 30, tzinfo=london_tz)
+        assert engine._get_session_label(dt) == "London"
+
+    def test_session_label_new_york(self):
+        """14:00 London time falls within New York session (13:00-17:00 London)."""
+        from zoneinfo import ZoneInfo
+
+        engine, _, _ = _make_engine()
+        london_tz = ZoneInfo("Europe/London")
+        dt = datetime(2026, 3, 23, 14, 0, tzinfo=london_tz)
+        assert engine._get_session_label(dt) == "New York"
+
+    @pytest.mark.asyncio
+    async def test_record_completed_trade_populates_journal_fields(self):
+        """Journal fields mfe_r, mae_r, time_in_trade_minutes, session_label set on TradeRecord."""
+        from zoneinfo import ZoneInfo
+
+        engine, _, _ = _make_engine()
+        london_tz = ZoneInfo("Europe/London")
+        # 09:30 London on 2026-03-23 (pre-DST) -> London session
+        entry_time = datetime(2026, 3, 23, 9, 30, tzinfo=london_tz).astimezone(UTC)
+        pos = OpenPosition(
+            id="p-rec",
+            symbol="MYM",
+            direction="LONG",
+            entry_price=100.0,
+            entry_time=entry_time,
+            stop_price=95.0,
+            initial_stop_price=95.0,  # risk = 5.0 price units
+            target_price=115.0,
+            size=1.0,
+            sl_trade=None,
+            tp_trade=None,
+            mfe_price=108.0,  # mfe_r = (108 - 100) / 5 = 1.6
+            mae_price=97.0,  # mae_r = (97 - 100) / 5 = -0.6
+        )
+        engine._positions["MYM"] = pos
+
+        await engine._record_completed_trade(pos, 115.0, "TARGET")
+
+        record = engine.state.save_trade.call_args[0][0]
+        assert record.mfe_r == pytest.approx(1.6)
+        assert record.mae_r == pytest.approx(-0.6)
+        assert record.time_in_trade_minutes is not None
+        assert record.session_label == "London"

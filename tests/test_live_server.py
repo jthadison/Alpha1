@@ -275,6 +275,37 @@ class TestApiTrades:
 
 
 # ---------------------------------------------------------------------------
+# PUT /api/trades/{trade_id}/journal
+# ---------------------------------------------------------------------------
+
+
+class TestPutJournal:
+    def test_put_journal_updates_notes(self, client_with_data):
+        """PUT /api/trades/1/journal delegates to state.update_trade_notes."""
+        state = client_with_data.app.state.state_mgr
+        state.update_trade_notes = AsyncMock(return_value=None)
+
+        response = client_with_data.put(
+            "/api/trades/1/journal",
+            json={"notes": "good trade", "tags": "fvg_bos"},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"ok": True}
+        state.update_trade_notes.assert_called_once_with(1, "good trade", "fvg_bos")
+
+    def test_put_journal_null_fields(self, client_with_data):
+        """Omitted fields in body are passed as None to state."""
+        state = client_with_data.app.state.state_mgr
+        state.update_trade_notes = AsyncMock(return_value=None)
+
+        response = client_with_data.put("/api/trades/2/journal", json={})
+
+        assert response.status_code == 200
+        state.update_trade_notes.assert_called_once_with(2, None, None)
+
+
+# ---------------------------------------------------------------------------
 # /api/metrics
 # ---------------------------------------------------------------------------
 

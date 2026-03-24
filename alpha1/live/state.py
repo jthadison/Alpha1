@@ -16,6 +16,7 @@ Design choices:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -77,6 +78,14 @@ class TradeRecord:
     fill_slippage_entry: float  # filled - limit (positive = worse)
     fill_slippage_exit: float  # signed slippage on exit
     signal_timestamp: str | None = None
+    mfe_price: float | None = None
+    mae_price: float | None = None
+    mfe_r: float | None = None
+    mae_r: float | None = None
+    time_in_trade_minutes: float | None = None
+    session_label: str | None = None
+    notes: str | None = None
+    tags: str | None = None
     id: int | None = field(default=None)  # set by DB on insert
 
 
@@ -133,9 +142,28 @@ CREATE TABLE IF NOT EXISTS trade_history (
     r_multiple            REAL,
     fill_slippage_entry   REAL,
     fill_slippage_exit    REAL,
+    mfe_price             REAL,
+    mae_price             REAL,
+    mfe_r                 REAL,
+    mae_r                 REAL,
+    time_in_trade_minutes REAL,
+    session_label         TEXT,
+    notes                 TEXT,
+    tags                  TEXT,
     created_at            TEXT DEFAULT CURRENT_TIMESTAMP
 );
 """
+
+_JOURNAL_MIGRATIONS = [
+    "ALTER TABLE trade_history ADD COLUMN mfe_price REAL",
+    "ALTER TABLE trade_history ADD COLUMN mae_price REAL",
+    "ALTER TABLE trade_history ADD COLUMN mfe_r REAL",
+    "ALTER TABLE trade_history ADD COLUMN mae_r REAL",
+    "ALTER TABLE trade_history ADD COLUMN time_in_trade_minutes REAL",
+    "ALTER TABLE trade_history ADD COLUMN session_label TEXT",
+    "ALTER TABLE trade_history ADD COLUMN notes TEXT",
+    "ALTER TABLE trade_history ADD COLUMN tags TEXT",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +195,9 @@ class StateManager:
         self._db = await aiosqlite.connect(db_path)
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(_DDL)
+        for sql in _JOURNAL_MIGRATIONS:
+            with contextlib.suppress(Exception):
+                await self._db.execute(sql)
         await self._db.commit()
         log.info("State DB ready: %s", db_path)
 
@@ -310,8 +341,10 @@ class StateManager:
             INSERT INTO trade_history
                 (instrument, direction, signal_timestamp, entry_time, entry_price_limit,
                  entry_price_filled, exit_time, exit_price_expected, exit_price_filled,
-                 exit_reason, pnl, r_multiple, fill_slippage_entry, fill_slippage_exit)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 exit_reason, pnl, r_multiple, fill_slippage_entry, fill_slippage_exit,
+                 mfe_price, mae_price, mfe_r, mae_r, time_in_trade_minutes,
+                 session_label, notes, tags)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 trade.instrument,
@@ -328,6 +361,14 @@ class StateManager:
                 trade.r_multiple,
                 trade.fill_slippage_entry,
                 trade.fill_slippage_exit,
+                trade.mfe_price,
+                trade.mae_price,
+                trade.mfe_r,
+                trade.mae_r,
+                trade.time_in_trade_minutes,
+                trade.session_label,
+                trade.notes,
+                trade.tags,
             ),
         )
         await db.commit()
@@ -359,7 +400,9 @@ class StateManager:
                 AVG(CASE WHEN exit_reason != 'TIME_EXIT' THEN ABS(fill_slippage_exit) END) AS avg_exit_slippage,
                 SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END)                        AS winners,
                 AVG(r_multiple)                                                  AS avg_r,
-                SUM(pnl)                                                         AS total_pnl
+                SUM(pnl)                                                         AS total_pnl,
+                AVG(CASE WHEN mfe_r IS NOT NULL THEN mfe_r END)  AS avg_mfe_r,
+                AVG(CASE WHEN mae_r IS NOT NULL THEN mae_r END)  AS avg_mae_r
             FROM trade_history
             """
         ) as cursor:
@@ -374,18 +417,24 @@ class StateManager:
             "avg_exit_slippage": round(row["avg_exit_slippage"] or 0.0, 5),
             "avg_r_multiple": round(row["avg_r"] or 0.0, 3),
             "total_pnl": round(row["total_pnl"] or 0.0, 2),
+            "avg_mfe_r": round(row["avg_mfe_r"] or 0.0, 3),
+            "avg_mae_r": round(row["avg_mae_r"] or 0.0, 3),
         }
+
+    async def update_trade_notes(self, trade_id: int, notes: str | None, tags: str | None) -> None:
+        """Update user-editable journal fields for a completed trade."""
+        db = self._require_db()
+        await db.execute(
+            "UPDATE trade_history SET notes = ?, tags = ? WHERE id = ?",
+            (notes, tags, trade_id),
+        )
+        await db.commit()
 
     async def close(self) -> None:
         """Close the database connection."""
         if self._db is not None:
             await self._db.close()
             self._db = None
-
-
-# ---------------------------------------------------------------------------
-# Row → record converters
-# ---------------------------------------------------------------------------
 
 
 def _row_to_pending(row) -> PendingOrderRecord:
@@ -441,4 +490,12 @@ def _row_to_trade(row) -> TradeRecord:
         r_multiple=row["r_multiple"],
         fill_slippage_entry=row["fill_slippage_entry"],
         fill_slippage_exit=row["fill_slippage_exit"],
+        mfe_price=row["mfe_price"],
+        mae_price=row["mae_price"],
+        mfe_r=row["mfe_r"],
+        mae_r=row["mae_r"],
+        time_in_trade_minutes=row["time_in_trade_minutes"],
+        session_label=row["session_label"],
+        notes=row["notes"],
+        tags=row["tags"],
     )

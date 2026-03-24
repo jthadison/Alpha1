@@ -92,6 +92,8 @@ class OpenPosition:
     tp_trade: object | None  # ib_async Trade; None for recovered positions without known bracket
     signal_timestamp: pd.Timestamp | None = None
     limit_entry_price: float = 0.0
+    mfe_price: float = 0.0  # most favourable price; updated on every bar
+    mae_price: float = 0.0  # most adverse price; updated on every bar
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +327,7 @@ class LiveEngine:
         # 5. Manage open position (breakeven).
         if symbol in self._positions:
             await self._manage_position(symbol, df_5m)
+        self._update_mfe_mae(symbol, df_5m)
 
         self._emit_event("bar_update", {"symbol": symbol, "time": str(current_time)})
 
@@ -600,6 +603,8 @@ class LiveEngine:
             tp_trade=tp_trade,
             signal_timestamp=po.signal.timestamp,
             limit_entry_price=po.signal.entry_price,
+            mfe_price=fill_price,
+            mae_price=fill_price,
         )
         self._positions[symbol] = position
 
@@ -693,9 +698,51 @@ class LiveEngine:
             )
             self._emit_event("breakeven_set", {"symbol": symbol, "r_achieved": current_r})
 
+    def _update_mfe_mae(self, symbol: str, df_5m: pd.DataFrame) -> None:
+        """Update max-favourable and max-adverse excursion for the open position."""
+        if symbol not in self._positions:
+            return
+        pos = self._positions[symbol]
+        bar = df_5m.iloc[-1]
+        high, low = bar["high"], bar["low"]
+        if pos.direction == "LONG":
+            pos.mfe_price = max(pos.mfe_price, high)
+            pos.mae_price = min(pos.mae_price, low)
+        else:  # SHORT
+            pos.mfe_price = min(pos.mfe_price, low)
+            pos.mae_price = max(pos.mae_price, high)
+
     # ------------------------------------------------------------------
     # Session-end exit
     # ------------------------------------------------------------------
+
+    def _get_session_label(self, dt: datetime) -> str:
+        """Return the trading session name for a UTC datetime."""
+        try:
+            from zoneinfo import ZoneInfo
+
+            london_tz = ZoneInfo("Europe/London")
+            t = dt.astimezone(london_tz).time()
+            s = self.config.session
+            # Compare against session boundaries (stored as London local time)
+            a_start = s.get_time("asian_start")  # 00:00
+            a_end = s.get_time("asian_end")  # 07:00
+            l_start = s.get_time("london_start")  # 08:00
+            l_end = s.get_time("london_end")  # 12:00
+            n_start = s.get_time("ny_start")  # 13:00
+            n_end = s.get_time("ny_end")  # 17:00
+            if a_start <= t < a_end:
+                return "Asian"
+            if l_start <= t < l_end:
+                return "London"
+            if n_start <= t < n_end:
+                return "New York"
+            if l_end <= t < n_start:
+                return "Transition"  # 12:00-13:00 gap
+            return "Off-Hours"
+        except Exception:
+            log.debug("Could not determine session label for %s", dt)
+            return "Off-Hours"
 
     def _next_session_end(self, reference_time: datetime) -> datetime | None:
         """
@@ -884,6 +931,21 @@ class LiveEngine:
             fill_slippage_entry = pos.limit_entry_price - pos.entry_price
         # Recovered positions have limit_entry_price == entry_price, so slippage is 0 regardless.
 
+        # Journal: MFE/MAE in R-units (price-normalised; distinct from dollar-weighted risk above)
+        price_risk = abs(pos.entry_price - pos.initial_stop_price)
+        if price_risk > 0:
+            if pos.direction == "LONG":
+                mfe_r = (pos.mfe_price - pos.entry_price) / price_risk
+                mae_r = (pos.mae_price - pos.entry_price) / price_risk
+            else:
+                mfe_r = (pos.entry_price - pos.mfe_price) / price_risk
+                mae_r = (pos.entry_price - pos.mae_price) / price_risk
+        else:
+            mfe_r = 0.0
+            mae_r = 0.0
+        time_in_minutes = (datetime.now(UTC) - pos.entry_time).total_seconds() / 60.0
+        session = self._get_session_label(pos.entry_time)
+
         await self.state.save_trade(
             TradeRecord(
                 instrument=pos.symbol,
@@ -900,6 +962,12 @@ class LiveEngine:
                 r_multiple=r_multiple,
                 fill_slippage_entry=fill_slippage_entry,
                 fill_slippage_exit=exit_slippage,
+                mfe_price=pos.mfe_price,
+                mae_price=pos.mae_price,
+                mfe_r=round(mfe_r, 3),
+                mae_r=round(mae_r, 3),
+                time_in_trade_minutes=round(time_in_minutes, 1),
+                session_label=session,
             )
         )
         await self.state.remove_open_position(pos.id)

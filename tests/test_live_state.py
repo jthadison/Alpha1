@@ -397,3 +397,81 @@ async def test_fill_quality_summary_time_exit_exit_slippage_excluded():
     summary = await sm.get_fill_quality_summary()
     # Only STOP_LOSS contributes: ABS(8.0) == 8.0
     assert summary["avg_exit_slippage"] == pytest.approx(8.0)
+
+
+# ---------------------------------------------------------------------------
+# Journal fields
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_save_trade_with_journal_fields():
+    sm = await _fresh_sm()
+    t = _make_trade()
+    t.mfe_price = 18620.0
+    t.mae_price = 18490.0
+    t.mfe_r = 2.1
+    t.mae_r = -0.5
+    t.time_in_trade_minutes = 47.5
+    t.session_label = "London"
+    t.notes = "clean BOS entry"
+    t.tags = "bos,fvg"
+    await sm.save_trade(t)
+
+    trades = await sm.get_trade_history()
+    assert len(trades) == 1
+    r = trades[0]
+    assert r.mfe_r == pytest.approx(2.1)
+    assert r.mae_r == pytest.approx(-0.5)
+    assert r.session_label == "London"
+    assert r.time_in_trade_minutes == pytest.approx(47.5)
+    assert r.notes == "clean BOS entry"
+    assert r.tags == "bos,fvg"
+
+
+@pytest.mark.asyncio
+async def test_update_trade_notes():
+    sm = await _fresh_sm()
+    await sm.save_trade(_make_trade())
+
+    trades = await sm.get_trade_history()
+    trade_id = trades[0].id
+    assert trade_id is not None
+
+    await sm.update_trade_notes(trade_id, "great setup", "fvg_bos,london")
+
+    updated = await sm.get_trade_history()
+    assert updated[0].notes == "great setup"
+    assert updated[0].tags == "fvg_bos,london"
+
+
+@pytest.mark.asyncio
+async def test_migration_idempotent():
+    """Running init_db twice on the same StateManager must not raise."""
+    sm = StateManager()
+    await sm.init_db(":memory:")
+    # Second call: DDL uses CREATE TABLE IF NOT EXISTS; migrations hit existing
+    # columns and are silently suppressed via contextlib.suppress.
+    await sm.init_db(":memory:")
+    # DB must still be usable
+    await sm.save_trade(_make_trade())
+    trades = await sm.get_trade_history()
+    assert len(trades) == 1
+
+
+@pytest.mark.asyncio
+async def test_fill_quality_includes_mfe_mae():
+    sm = await _fresh_sm()
+
+    t1 = _make_trade()
+    t1.mfe_r = 2.0
+    t1.mae_r = -0.4
+    t2 = _make_trade()
+    t2.mfe_r = 1.0
+    t2.mae_r = -0.8
+    await sm.save_trade(t1)
+    await sm.save_trade(t2)
+
+    summary = await sm.get_fill_quality_summary()
+    assert summary["avg_mfe_r"] == pytest.approx(1.5)
+    assert summary["avg_mae_r"] == pytest.approx(-0.6)

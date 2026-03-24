@@ -267,6 +267,45 @@ function shortTs(ts) {
 }
 
 // ---------------------------------------------------------------------------
+// Trading journal — inline editing
+// ---------------------------------------------------------------------------
+
+async function saveTradeJournal(tradeId, notes, tags) {
+  try {
+    await fetch(`/api/trades/${tradeId}/journal`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({notes, tags}),
+    });
+  } catch (e) {
+    console.warn('Failed to save journal entry:', e);
+  }
+}
+
+function setupEditableCells() {
+  document.querySelectorAll('.editable-journal').forEach(cell => {
+    const original = cell.textContent.trim();
+    cell.dataset.original = original;
+    cell.addEventListener('blur', () => {
+      const current = cell.textContent.trim();
+      if (current === cell.dataset.original) return;
+      cell.dataset.original = current;
+      const tradeId = parseInt(cell.dataset.tradeId);
+      const row = cell.closest('tr');
+      const tagsCell  = row.querySelector('[data-field="tags"]');
+      const notesCell = row.querySelector('[data-field="notes"]');
+      const tags  = tagsCell  ? tagsCell.textContent.trim()  : null;
+      const notes = notesCell ? notesCell.textContent.trim() : null;
+      saveTradeJournal(
+        tradeId,
+        notes === '\u2014' ? null : notes,
+        tags  === '\u2014' ? null : tags
+      );
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------
 
@@ -274,6 +313,7 @@ document.addEventListener('DOMContentLoaded', () => {
   connectWebSocket();
   refreshDashboard();
   updateEquityFromApi();
+  setupEditableCells();
 });
 
 // Expose for template script blocks

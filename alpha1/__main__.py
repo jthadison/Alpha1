@@ -177,7 +177,16 @@ def main():
         help="Disable paper mode (USE WITH CAUTION)",
     )
     live_parser.add_argument("--web-port", type=int, default=None, dest="web_port", help="Web dashboard port")
-    live_parser.add_argument("--web-host", type=str, default=None, dest="web_host", help="Web dashboard bind address (default 127.0.0.1; use 0.0.0.0 to expose on all interfaces)")
+    live_parser.add_argument(
+        "--web-host",
+        type=str,
+        default=None,
+        dest="web_host",
+        help=(
+            "Web dashboard bind address (default 127.0.0.1; "
+            "use 0.0.0.0 to expose on all interfaces)"
+        ),
+    )
     live_parser.add_argument("--instruments", type=str, nargs="+", default=None, help="Override instrument list")
 
     args = parser.parse_args()

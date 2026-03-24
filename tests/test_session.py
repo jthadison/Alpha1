@@ -21,7 +21,10 @@ def test_session_detection():
         "2024-01-01 13:00:00",
         "2024-01-01 18:00:00"
     ]
-    df = pd.DataFrame({'open': [1,1,1,1], 'high': [2,2,2,2], 'low': [0,0,0,0], 'close': [1,1,1,1], 'volume': [100,100,100,100]})
+    df = pd.DataFrame({
+        'open': [1, 1, 1, 1], 'high': [2, 2, 2, 2], 'low': [0, 0, 0, 0],
+        'close': [1, 1, 1, 1], 'volume': [100, 100, 100, 100]
+    })
     df['datetime'] = pd.to_datetime(times, utc=True)
     df = df.set_index('datetime')
 
