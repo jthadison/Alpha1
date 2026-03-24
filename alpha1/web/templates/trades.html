@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Trades — Alpha1 Live{% endblock %}
+
+{% block content %}
+
+<!-- Fill quality summary -->
+<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+  {% set s = fill_summary %}
+  <div class="bg-gray-900 rounded-lg border border-gray-800 px-4 py-3">
+    <div class="text-gray-500 text-xs uppercase tracking-wider mb-1">Total Trades</div>
+    <div class="text-xl font-bold text-white">{{ s.total_trades }}</div>
+  </div>
+  <div class="bg-gray-900 rounded-lg border border-gray-800 px-4 py-3">
+    <div class="text-gray-500 text-xs uppercase tracking-wider mb-1">Win Rate</div>
+    <div class="text-xl font-bold {% if s.win_rate >= 50 %}text-green-400{% else %}text-red-400{% endif %}">{{ s.win_rate }}%</div>
+  </div>
+  <div class="bg-gray-900 rounded-lg border border-gray-800 px-4 py-3">
+    <div class="text-gray-500 text-xs uppercase tracking-wider mb-1">Avg R</div>
+    <div class="text-xl font-bold {% if s.avg_r_multiple >= 0 %}text-green-400{% else %}text-red-400{% endif %}">{{ s.avg_r_multiple }}</div>
+  </div>
+  <div class="bg-gray-900 rounded-lg border border-gray-800 px-4 py-3">
+    <div class="text-gray-500 text-xs uppercase tracking-wider mb-1">Total PnL</div>
+    <div class="text-xl font-bold {% if s.total_pnl >= 0 %}text-green-400{% else %}text-red-400{% endif %}">${{ "%.2f"|format(s.total_pnl) }}</div>
+  </div>
+  <div class="bg-gray-900 rounded-lg border border-gray-800 px-4 py-3">
+    <div class="text-gray-500 text-xs uppercase tracking-wider mb-1">Avg Entry Slip</div>
+    <div class="text-xl font-bold text-amber-400">{{ s.avg_entry_slippage }}</div>
+  </div>
+  <div class="bg-gray-900 rounded-lg border border-gray-800 px-4 py-3">
+    <div class="text-gray-500 text-xs uppercase tracking-wider mb-1">Avg Exit Slip</div>
+    <div class="text-xl font-bold text-amber-400">{{ s.avg_exit_slippage }}</div>
+  </div>
+</div>
+
+<!-- Trade log -->
+<section>
+  <h2 class="text-xs font-bold uppercase tracking-widest text-gray-500 mb-2">Trade Log</h2>
+  <div class="bg-gray-900 rounded-lg border border-gray-800 overflow-x-auto">
+    <table class="w-full text-xs">
+      <thead>
+        <tr class="text-gray-500 border-b border-gray-800">
+          <th class="px-3 py-2 text-left">#</th>
+          <th class="px-3 py-2 text-left">Symbol</th>
+          <th class="px-3 py-2 text-left">Dir</th>
+          <th class="px-3 py-2 text-right">Entry Time</th>
+          <th class="px-3 py-2 text-right">Limit</th>
+          <th class="px-3 py-2 text-right">Filled</th>
+          <th class="px-3 py-2 text-right">Entry Slip</th>
+          <th class="px-3 py-2 text-right">Exit Time</th>
+          <th class="px-3 py-2 text-right">Expected</th>
+          <th class="px-3 py-2 text-right">Filled</th>
+          <th class="px-3 py-2 text-right">Exit Slip</th>
+          <th class="px-3 py-2 text-left">Reason</th>
+          <th class="px-3 py-2 text-right">PnL</th>
+          <th class="px-3 py-2 text-right">R</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in trades %}
+        <tr class="border-b border-gray-800/50">
+          <td class="px-3 py-2 text-gray-600">{{ t.id }}</td>
+          <td class="px-3 py-2 font-bold text-white">{{ t.instrument }}</td>
+          <td class="px-3 py-2">
+            <span class="badge {% if t.direction == 'LONG' %}badge-long{% else %}badge-short{% endif %}">{{ t.direction }}</span>
+          </td>
+          <td class="px-3 py-2 text-right text-gray-400">{{ (t.entry_time or '')[:16] }}</td>
+          <td class="px-3 py-2 text-right">{{ "%.5f"|format(t.entry_price_limit) if t.entry_price_limit is not none else '—' }}</td>
+          <td class="px-3 py-2 text-right">{{ "%.5f"|format(t.entry_price_filled) if t.entry_price_filled is not none else '—' }}</td>
+          <td class="px-3 py-2 text-right {% if (t.fill_slippage_entry or 0) > 0 %}text-red-400{% else %}text-green-400{% endif %}">
+            {{ "%.5f"|format(t.fill_slippage_entry) if t.fill_slippage_entry is not none else '—' }}
+          </td>
+          <td class="px-3 py-2 text-right text-gray-400">{{ (t.exit_time or '')[:16] }}</td>
+          <td class="px-3 py-2 text-right">{{ "%.5f"|format(t.exit_price_expected) if t.exit_price_expected is not none else '—' }}</td>
+          <td class="px-3 py-2 text-right">{{ "%.5f"|format(t.exit_price_filled) if t.exit_price_filled is not none else '—' }}</td>
+          <td class="px-3 py-2 text-right {% if (t.fill_slippage_exit or 0)|abs > 0.0001 %}text-amber-400{% endif %}">
+            {{ "%.5f"|format(t.fill_slippage_exit) if t.fill_slippage_exit is not none else '—' }}
+          </td>
+          <td class="px-3 py-2 text-gray-400">{{ t.exit_reason or '—' }}</td>
+          <td class="px-3 py-2 text-right font-bold {% if (t.pnl or 0) >= 0 %}text-green-400{% else %}text-red-400{% endif %}">
+            ${{ "%.2f"|format(t.pnl or 0) }}
+          </td>
+          <td class="px-3 py-2 text-right {% if (t.r_multiple or 0) >= 0 %}text-green-400{% else %}text-red-400{% endif %}">
+            {{ "%.2f"|format(t.r_multiple or 0) }}R
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="14" class="px-3 py-8 text-center text-gray-600">No trades recorded yet</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% endblock %}

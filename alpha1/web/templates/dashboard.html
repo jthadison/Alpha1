@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Alpha1 Live{% endblock %}
+
+{% block content %}
+
+<!-- Summary bar -->
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+  <div class="bg-gray-900 rounded-lg border border-gray-800 px-4 py-3">
+    <div class="text-gray-500 text-xs uppercase tracking-wider mb-1">Net Liquidation</div>
+    <div id="equity-val" class="text-xl font-bold text-white">—</div>
+  </div>
+  <div class="bg-gray-900 rounded-lg border border-gray-800 px-4 py-3">
+    <div class="text-gray-500 text-xs uppercase tracking-wider mb-1">Open Positions</div>
+    <div id="pos-count" class="text-xl font-bold text-white">0</div>
+  </div>
+  <div class="bg-gray-900 rounded-lg border border-gray-800 px-4 py-3">
+    <div class="text-gray-500 text-xs uppercase tracking-wider mb-1">Pending Orders</div>
+    <div id="order-count" class="text-xl font-bold text-white">0</div>
+  </div>
+  <div class="bg-gray-900 rounded-lg border border-gray-800 px-4 py-3">
+    <div class="text-gray-500 text-xs uppercase tracking-wider mb-1">Session</div>
+    <div id="session-label" class="text-xl font-bold text-gray-400">—</div>
+  </div>
+</div>
+
+<!-- Two-column layout: tables on left, event feed on right -->
+<div class="flex gap-4">
+  <div class="flex-1 min-w-0 space-y-5">
+
+    <!-- Open Positions -->
+    <section>
+      <h2 class="text-xs font-bold uppercase tracking-widest text-gray-500 mb-2">Open Positions</h2>
+      <div class="bg-gray-900 rounded-lg border border-gray-800 overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="text-gray-500 border-b border-gray-800">
+              <th class="px-3 py-2 text-left">Symbol</th>
+              <th class="px-3 py-2 text-left">Dir</th>
+              <th class="px-3 py-2 text-right">Entry</th>
+              <th class="px-3 py-2 text-right">Stop</th>
+              <th class="px-3 py-2 text-right">Target</th>
+              <th class="px-3 py-2 text-right">Size</th>
+              <th class="px-3 py-2 text-right">Entry Time</th>
+            </tr>
+          </thead>
+          <tbody id="positions-tbody">
+            <tr><td colspan="7" class="px-3 py-4 text-center text-gray-600">No open positions</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Pending Orders -->
+    <section>
+      <h2 class="text-xs font-bold uppercase tracking-widest text-gray-500 mb-2">Pending Orders</h2>
+      <div class="bg-gray-900 rounded-lg border border-gray-800 overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="text-gray-500 border-b border-gray-800">
+              <th class="px-3 py-2 text-left">Symbol</th>
+              <th class="px-3 py-2 text-left">Dir</th>
+              <th class="px-3 py-2 text-right">Limit</th>
+              <th class="px-3 py-2 text-right">Stop</th>
+              <th class="px-3 py-2 text-right">Target</th>
+              <th class="px-3 py-2 text-right">Cancel@</th>
+              <th class="px-3 py-2 text-left">Status</th>
+              <th class="px-3 py-2 text-left">Placed</th>
+            </tr>
+          </thead>
+          <tbody id="orders-tbody">
+            <tr><td colspan="8" class="px-3 py-4 text-center text-gray-600">No pending orders</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Live event feed -->
+  <div class="w-72 shrink-0">
+    <h2 class="text-xs font-bold uppercase tracking-widest text-gray-500 mb-2">Live Events</h2>
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-3 overflow-y-auto max-h-96 space-y-1 text-xs" id="live-events">
+      <div class="text-gray-600">Waiting for events…</div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Dashboard-specific: refresh tables every 5s as a fallback
+setInterval(() => {
+  if (typeof refreshDashboard === 'function') refreshDashboard();
+}, 5000);
+</script>
+{% endblock %}

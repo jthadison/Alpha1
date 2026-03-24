@@ -1,4 +1,6 @@
 import argparse
+import asyncio
+import logging
 import sys
 
 from alpha1.analysis.dashboard import plot_dashboard
@@ -162,12 +164,129 @@ def main():
         help="Output directory",
     )
 
+    live_parser = subparsers.add_parser("live", help="Run live trading engine + web dashboard")
+    live_parser.add_argument("--config", type=str, default="configs/live.json", help="Path to strategy config JSON")
+    live_parser.add_argument("--host", type=str, default=None, help="IBKR host override")
+    live_parser.add_argument("--port", type=int, default=None, help="IBKR port override")
+    live_parser.add_argument("--client-id", type=int, default=None, dest="client_id", help="IBKR client ID override")
+    live_parser.add_argument("--paper", action="store_true", default=None, help="Force paper trading mode")
+    live_parser.add_argument(
+        "--live-account",
+        action="store_true",
+        dest="live_account",
+        help="Disable paper mode (USE WITH CAUTION)",
+    )
+    live_parser.add_argument("--web-port", type=int, default=None, dest="web_port", help="Web dashboard port")
+    live_parser.add_argument("--web-host", type=str, default=None, dest="web_host", help="Web dashboard bind address (default 127.0.0.1; use 0.0.0.0 to expose on all interfaces)")
+    live_parser.add_argument("--instruments", type=str, nargs="+", default=None, help="Override instrument list")
+
     args = parser.parse_args()
 
     if args.command == "backtest":
         run_backtest(args.config, args.data, args.instrument, args.out)
     elif args.command == "portfolio":
         run_portfolio(args.pairs, args.max_concurrent, args.out)
+    elif args.command == "live":
+        asyncio.run(_run_live(args))
+
+
+async def _run_live(args) -> None:
+    """
+    Async entry point for the live trading engine.
+
+    Single asyncio.run() call ensures ib_async and uvicorn share the same event
+    loop.  Do NOT call ib.run() — let asyncio manage the loop.
+    (Adversarial Finding #9)
+    """
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+    )
+    log = logging.getLogger("alpha1.live")
+
+    # Load config and apply CLI overrides
+    try:
+        config = StrategyConfig.from_json(args.config)
+    except FileNotFoundError:
+        print(f"Config not found: {args.config}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"Error loading config: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.host:
+        config.live.host = args.host
+    if args.port:
+        config.live.port = args.port
+    if args.client_id:
+        config.live.client_id = args.client_id
+    if args.instruments:
+        config.live.instruments = args.instruments
+    if args.web_port:
+        config.live.web_port = args.web_port
+    if args.web_host:
+        config.live.web_host = args.web_host
+    if getattr(args, "live_account", False):
+        config.live.paper = False
+    elif args.paper:
+        config.live.paper = True
+
+    if not config.live.paper:
+        log.warning("=" * 60)
+        log.warning("LIVE ACCOUNT MODE — real money at risk!")
+        log.warning("IBKR port: %d", config.live.port)
+        log.warning("=" * 60)
+    else:
+        log.info("Paper trading mode (port %d).", config.live.port)
+
+    # Deferred import so base install doesn't require live deps
+    try:
+        import uvicorn
+
+        from alpha1.live.broker import IBKRBroker
+        from alpha1.live.engine import LiveEngine
+        from alpha1.live.feed import LiveFeed
+        from alpha1.live.server import create_app
+        from alpha1.live.state import StateManager
+    except ImportError as exc:
+        print(
+            f"Live trading dependencies not installed: {exc}\nInstall with: pip install -e '.[live]'",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    state = StateManager()
+    broker = IBKRBroker(config.live)
+    feed = LiveFeed(broker, config)
+    engine = LiveEngine(broker, feed, state, config)
+    app = create_app(state, broker, engine)
+
+    try:
+        await engine.start()
+    except Exception as exc:
+        log.exception("Engine startup failed: %s", exc)
+        sys.exit(1)
+
+    server_cfg = uvicorn.Config(
+        app,
+        host=config.live.web_host,
+        port=config.live.web_port,
+        log_level="info",
+    )
+    server = uvicorn.Server(server_cfg)
+
+    log.info(
+        "Dashboard: http://%s:%d",
+        config.live.web_host,
+        config.live.web_port,
+    )
+
+    try:
+        await asyncio.gather(server.serve(), engine.run_forever())
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        log.info("Shutdown signal received.")
+    finally:
+        await engine.stop()
 
 
 if __name__ == "__main__":
