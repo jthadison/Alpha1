@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-950">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Alpha1 Live{% endblock %}</title>
+
+  <!-- Tailwind CSS (CDN, no build step) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            gray: {
+              950: '#0a0a0f',
+              900: '#111118',
+              800: '#1a1a24',
+              700: '#242432',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- TradingView Lightweight Charts -->
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+
+  <style>
+    /* Scrollbar styling */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #111118; }
+    ::-webkit-scrollbar-thumb { background: #242432; border-radius: 3px; }
+
+    /* Status dot animation */
+    .dot-pulse {
+      width: 8px; height: 8px; border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* Table row hover */
+    tbody tr:hover { background: rgba(255,255,255,0.03); }
+
+    /* Badge */
+    .badge-long  { color: #34d399; background: rgba(52,211,153,0.12); }
+    .badge-short { color: #f87171; background: rgba(248,113,113,0.12); }
+    .badge       { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; }
+  </style>
+</head>
+
+<body class="h-full text-gray-200 font-mono text-sm antialiased">
+
+<!-- Nav -->
+<nav class="border-b border-gray-800 bg-gray-900 px-6 py-3 flex items-center justify-between">
+  <div class="flex items-center gap-6">
+    <span class="text-white font-bold tracking-widest text-xs uppercase">Alpha1 Live</span>
+    <a href="/"       class="text-gray-400 hover:text-white transition-colors {% if request.url.path == '/' %}text-white{% endif %}">Dashboard</a>
+    <a href="/trades" class="text-gray-400 hover:text-white transition-colors {% if request.url.path == '/trades' %}text-white{% endif %}">Trades</a>
+  </div>
+
+  <div class="flex items-center gap-4 text-xs">
+    {% if paper %}
+    <span class="text-amber-400 border border-amber-400/30 px-2 py-0.5 rounded">PAPER</span>
+    {% else %}
+    <span class="text-red-400 border border-red-400/50 px-2 py-0.5 rounded font-bold">LIVE</span>
+    {% endif %}
+
+    <div class="flex items-center gap-2">
+      <div id="conn-dot" class="dot-pulse bg-gray-600"></div>
+      <span id="conn-label" class="text-gray-500">connecting…</span>
+    </div>
+
+    <span class="text-gray-400">Equity: <span id="nav-equity" class="text-white">—</span></span>
+  </div>
+</nav>
+
+<!-- Main -->
+<main class="px-6 py-6 max-w-screen-2xl mx-auto">
+  {% block content %}{% endblock %}
+</main>
+
+<!-- Event feed (slide-in panel, shared across pages) -->
+<div id="event-feed" class="fixed bottom-4 right-4 w-80 max-h-64 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs space-y-1 opacity-0 transition-opacity pointer-events-none">
+  <div class="text-gray-500 font-bold mb-1 uppercase tracking-wider">Events</div>
+  <!-- Event items injected by app.js -->
+</div>
+
+<script src="/static/app.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
