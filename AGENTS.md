@@ -37,7 +37,7 @@ The adversarial reviewer **already caught** the most critical bug in this projec
 
 ### Branching
 
-> **No work is ever done directly on `main`.** Every change lives on a dedicated branch.
+> **No work is ever done directly on `main`.** Every change lives on a dedicated worktree branch.
 
 ```bash
 # Create feature branch

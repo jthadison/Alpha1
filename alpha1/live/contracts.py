@@ -34,14 +34,6 @@ class ContractSpec:
     is_forex: bool  # True → bar columns use MIDPOINT semantics
 
 
-# whatToShow must match the instrument type to get valid OHLC bars from IBKR.
-# Using TRADES for forex raises "No data of type TRADES" errors.
-WHAT_TO_SHOW: dict[str, str] = {
-    "XAUUSD": "MIDPOINT",
-    "MYM": "TRADES",
-    "MNQ": "TRADES",
-}
-
 _CONTRACT_SPECS: dict[str, ContractSpec] = {
     "XAUUSD": ContractSpec(what_to_show="MIDPOINT", is_forex=True),
     "MYM": ContractSpec(what_to_show="TRADES", is_forex=False),

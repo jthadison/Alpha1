@@ -593,3 +593,190 @@ class TestBracketChildPreservation:
 
         assert "MYM" not in engine._positions
         broker.cancel_order.assert_called_once_with(tp_trade)
+
+
+# ---------------------------------------------------------------------------
+# Review findings — PR #1
+# ---------------------------------------------------------------------------
+
+
+class TestReviewFindings:
+    """Tests for the 8 code-review findings addressed in PR #1."""
+
+    # ------------------------------------------------------------------
+    # Finding P0: double fill overwrites position
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_double_fill_second_order_cancelled(self):
+        """Two pending orders for the same symbol both Filled — only first creates position."""
+        engine, broker, _ = _make_engine()
+
+        sig = _make_signal(ts=pd.Timestamp("2026-03-23 14:55:00", tz="UTC"))
+        po1 = PendingOrder(
+            id="po-1",
+            symbol="MYM",
+            signal=sig,
+            size=2.0,
+            actual_stop=95.0,
+            parent_trade=_make_order(10, "Filled", 100.0),
+            tp_trade=_make_order(11, "Submitted"),
+            sl_trade=_make_order(12, "Submitted"),
+            placed_at=datetime.now(UTC),
+        )
+        po2 = PendingOrder(
+            id="po-2",
+            symbol="MYM",
+            signal=_make_signal(entry_price=101.0, ts=pd.Timestamp("2026-03-23 14:55:00", tz="UTC")),
+            size=1.0,
+            actual_stop=94.0,
+            parent_trade=_make_order(20, "Filled", 101.0),
+            tp_trade=_make_order(21, "Submitted"),
+            sl_trade=_make_order(22, "Submitted"),
+            placed_at=datetime.now(UTC),
+        )
+        engine._pending["MYM"] = [po1, po2]
+
+        df = _make_ohlcv(10, end="2026-03-23 15:00")
+        await engine._manage_pending_orders("MYM", df)
+
+        # Only one position — the first fill wins
+        assert "MYM" in engine._positions
+        assert engine._positions["MYM"].id == "po-1"
+
+        # Duplicate bracket children must be cancelled
+        broker.cancel_order.assert_any_call(po2.tp_trade)
+        broker.cancel_order.assert_any_call(po2.sl_trade)
+
+        # place_bracket must never be called (these are fill transitions, not new orders)
+        broker.place_bracket.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # Finding P1: signals permanently lost when equity=0
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_equity_zero_defers_signals_to_known_set(self):
+        """equity=0 clears all_signals before dedup; nothing added to _known_signals."""
+        engine, broker, _ = _make_engine()
+        broker.get_equity.return_value = 0.0
+
+        df = _make_ohlcv(60, end="2026-03-23 15:00")
+        sig_ts = df.index[-2] - pd.Timedelta(minutes=5 * 10)
+        signal = _make_signal(ts=sig_ts)
+
+        with patch("alpha1.strategy.signals.generate_signals", return_value=[signal]):
+            await engine._process_bar("MYM", {"5min": df, "15min": df, "1h": df, "4h": df})
+
+        # Signal must NOT be in _known_signals so it can be retried next bar
+        key = (signal.timestamp, signal.direction, signal.entry_price)
+        assert key not in engine._known_signals.get("MYM", set())
+        broker.place_bracket.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_equity_nonzero_adds_signal_to_known_set(self):
+        """equity>0: signals are added to _known_signals after placement attempt."""
+        engine, broker, _ = _make_engine()
+        broker.get_equity.return_value = 100_000.0
+        broker.place_bracket.return_value = (
+            _make_order(1, "Submitted"),
+            _make_order(2, "Submitted"),
+            _make_order(3, "Submitted"),
+        )
+
+        df = _make_ohlcv(60, end="2026-03-23 15:00")
+        sig_ts = df.index[-2] - pd.Timedelta(minutes=5 * 10)
+        signal = _make_signal(ts=sig_ts)
+
+        with patch("alpha1.strategy.signals.generate_signals", return_value=[signal]):
+            await engine._process_bar("MYM", {"5min": df, "15min": df, "1h": df, "4h": df})
+
+        key = (signal.timestamp, signal.direction, signal.entry_price)
+        assert key in engine._known_signals.get("MYM", set())
+
+    # ------------------------------------------------------------------
+    # Finding P1: _recover_state preserves initial_stop_price from DB
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_recover_state_uses_db_initial_stop_price(self):
+        """DB initial_stop_price survives recovery even when stop_price is at breakeven."""
+        from alpha1.live.state import OpenPositionRecord
+
+        engine, broker, _ = _make_engine()
+        ibkr_pos = _make_ibkr_position("MYM", qty=2.0, avg_cost=23400.0, multiplier=0.5)
+        broker.get_positions.return_value = [ibkr_pos]
+
+        db_pos = OpenPositionRecord(
+            id="pos-recover",
+            instrument="MYM",
+            direction="LONG",
+            entry_price=46800.0,
+            entry_time="2026-03-23T14:45:00+00:00",
+            stop_price=46800.0,  # moved to breakeven
+            initial_stop_price=46600.0,  # original stop
+            target_price=47100.0,
+            size=2.0,
+        )
+        engine.state.get_open_positions = AsyncMock(return_value=[db_pos])
+        engine.state.get_pending_orders = AsyncMock(return_value=[])
+
+        await engine._recover_state()
+
+        pos = engine._positions["MYM"]
+        # initial_stop_price must come from DB, not from stop_price
+        assert pos.initial_stop_price == pytest.approx(46600.0)
+        assert pos.stop_price == pytest.approx(46800.0)
+
+    # ------------------------------------------------------------------
+    # Finding P2: session-end timeout keeps position tracked
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_session_end_timeout_keeps_position_tracked(self):
+        """Market close times out → position stays in _positions; no trade recorded."""
+        engine, broker, _ = _make_engine()
+
+        pos = OpenPosition(
+            id="p-timeout",
+            symbol="MYM",
+            direction="LONG",
+            entry_price=46800.0,
+            entry_time=datetime.now(UTC),
+            stop_price=46600.0,
+            initial_stop_price=46600.0,
+            target_price=47100.0,
+            size=1.0,
+            sl_trade=None,
+            tp_trade=None,
+        )
+        engine._positions["MYM"] = pos
+
+        # isDone() always returns False — simulates a market order that never fills
+        never_done = _make_order(99, "Submitted")  # isDone lambda returns False
+        broker.close_position_market.return_value = never_done
+
+        exit_time = datetime.now(UTC)  # no sleep
+        await engine._session_end_exit("MYM", exit_time)
+
+        # Position must remain tracked for manual resolution
+        assert "MYM" in engine._positions
+        # No trade should have been recorded
+        engine.state.save_trade.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # Finding P2: short DataFrame causes IndexError on index[-2]
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_df_too_short_returns_early(self):
+        """1-row DataFrame returns before generate_signals is called."""
+        engine, broker, _ = _make_engine()
+
+        df = _make_ohlcv(1, end="2026-03-23 15:00")
+
+        with patch("alpha1.strategy.signals.generate_signals") as mock_gen:
+            await engine._process_bar("MYM", {"5min": df, "15min": df, "1h": df, "4h": df})
+
+        mock_gen.assert_not_called()
+        broker.place_bracket.assert_not_called()

@@ -327,3 +327,18 @@ async def test_use_before_init_raises():
     sm = StateManager()
     with pytest.raises(RuntimeError, match="init_db"):
         await sm.get_pending_orders()
+
+
+@pytest.mark.asyncio
+async def test_init_db_twice_closes_first_connection():
+    """Second init_db call closes the first connection and leaves the DB usable."""
+    sm = StateManager()
+    await sm.init_db(":memory:")
+    # Call a second time -- must not raise and must not leak the first connection
+    await sm.init_db(":memory:")
+    # DB must be fully functional after the second init
+    order = _make_pending(id_="leak-check")
+    await sm.save_pending_order(order)
+    orders = await sm.get_pending_orders()
+    assert len(orders) == 1
+    assert orders[0].id == "leak-check"

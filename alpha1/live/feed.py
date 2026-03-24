@@ -18,19 +18,19 @@ The polling approach:
      is present, rebuild the data_dict and fire callbacks.
 
 Trade-off vs keepUpToDate:
-  - Slightly less precise timing (~5–15 s after bar close vs. ~1 s).
+  - Slightly less precise timing (~5-15 s after bar close vs. ~1 s).
   - No dependency on live data subscription.
   - Robust to connection drop / nightly IBKR restart — each poll is a fresh
     IBKR request that will succeed once the connection is restored.
   - Memory is still bounded (trimmed to config.live.history_bars).
 """
+
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -72,6 +72,7 @@ class LiveFeed:
         # Registered bar-close callbacks
         self._callbacks: list[Callable[[str, dict[str, pd.DataFrame]], None]] = []
         self._running = True
+        self._subscribe_count: int = 0  # tracks subscription order for poll staggering
 
     # ------------------------------------------------------------------
     # Public API
@@ -88,7 +89,7 @@ class LiveFeed:
         """
         Load 60 days of 5M history for an instrument and start polling for new bars.
 
-        The initial load may take 15–45 seconds (IBKR HMDS throttling).
+        The initial load may take 15-45 seconds (IBKR HMDS throttling).
         """
         from alpha1.live.contracts import get_what_to_show
 
@@ -113,8 +114,11 @@ class LiveFeed:
             self._last_bar_ts.get(symbol),
         )
 
-        # Start the poll loop
-        task = asyncio.create_task(self._poll_loop(symbol, contract, what))
+        # Stagger poll starts: 2-second offset per instrument to avoid simultaneous
+        # reqHistoricalDataAsync calls through the single IB socket.
+        offset = self._subscribe_count * 2
+        self._subscribe_count += 1
+        task = asyncio.create_task(self._poll_loop(symbol, contract, what, offset_secs=offset))
         self._poll_tasks[symbol] = task
 
     def get_data_dict(self, symbol: str) -> dict[str, pd.DataFrame] | None:
@@ -138,20 +142,25 @@ class LiveFeed:
     # Poll loop
     # ------------------------------------------------------------------
 
-    async def _poll_loop(self, symbol: str, contract, what: str) -> None:
+    async def _poll_loop(self, symbol: str, contract, what: str, offset_secs: float = 0.0) -> None:
         """
         Sleep until each 5M bar close + buffer, then fetch the latest bars.
 
         Aligns to 5-minute boundaries on the UTC clock (00:00, 00:05, 00:10…)
         so we don't drift relative to IBKR's bar close times.
         """
+        if offset_secs > 0:
+            log.debug("%s: poll start staggered by %.0f s.", symbol, offset_secs)
+            await asyncio.sleep(offset_secs)
         log.info("%s: poll loop started.", symbol)
         while self._running:
             try:
                 sleep_secs = self._secs_until_next_bar_close()
                 log.debug(
                     "%s: next poll in %.0f s (at next 5M boundary + %d s buffer).",
-                    symbol, sleep_secs, _POLL_BUFFER_SECS,
+                    symbol,
+                    sleep_secs,
+                    _POLL_BUFFER_SECS,
                 )
                 await asyncio.sleep(sleep_secs)
 
@@ -175,7 +184,7 @@ class LiveFeed:
         IBKR aligns 5M bars to 00:00 UTC (00:00, 00:05, 00:10, …).
         We add _POLL_BUFFER_SECS so the bar is committed to HMDS before we query.
         """
-        now = datetime.now(timezone.utc).timestamp()
+        now = datetime.now(UTC).timestamp()
         secs_into_bar = now % _BAR_SECS
         secs_to_close = _BAR_SECS - secs_into_bar + _POLL_BUFFER_SECS
         # Minimum 5 seconds to avoid hammering IBKR immediately
@@ -204,8 +213,9 @@ class LiveFeed:
             new_bars = df.iloc[:-1]
 
         if new_bars.empty:
-            log.info("%s: poll OK — no new bars beyond last_known=%s (latest in fetch=%s).",
-                      symbol, last_known, df.index[-1])
+            log.info(
+                "%s: poll OK — no new bars beyond last_known=%s (latest in fetch=%s).", symbol, last_known, df.index[-1]
+            )
             return
 
         log.info(
@@ -222,7 +232,7 @@ class LiveFeed:
         data_dict = self._data_dicts[symbol]
 
         # Fire one callback per new bar, in order
-        for _, bar_row in new_bars.iterrows():
+        for _, _bar_row in new_bars.iterrows():
             for cb in self._callbacks:
                 result = cb(symbol, data_dict)
                 if asyncio.isfuture(result) or asyncio.iscoroutine(result):
@@ -232,16 +242,13 @@ class LiveFeed:
     # IBKR fetch helpers
     # ------------------------------------------------------------------
 
-    async def _fetch_history(
-        self, contract, what: str, duration: str
-    ) -> pd.DataFrame | None:
+    async def _fetch_history(self, contract, what: str, duration: str) -> pd.DataFrame | None:
         """
         Fetch historical bars from IBKR HMDS.  Returns a UTC-indexed DataFrame
         or None on failure.
 
         keepUpToDate=False: works on all account levels including delayed-only.
         """
-        from ib_async import util
 
         try:
             bars = await self.broker.ib.reqHistoricalDataAsync(
@@ -313,10 +320,7 @@ class LiveFeed:
         existing_5m = existing_dict.get("5min", pd.DataFrame())
         last_known = existing_5m.index[-1] if not existing_5m.empty else None
 
-        if last_known is not None:
-            new_rows = fresh_df[fresh_df.index > last_known]
-        else:
-            new_rows = fresh_df
+        new_rows = fresh_df[fresh_df.index > last_known] if last_known is not None else fresh_df
 
         if new_rows.empty:
             return

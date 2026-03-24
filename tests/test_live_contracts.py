@@ -67,12 +67,9 @@ class TestContractSpecs:
         assert spec.what_to_show == "TRADES"
 
     def test_all_instruments_have_specs(self):
-        """Every instrument in WHAT_TO_SHOW must have a ContractSpec."""
-        from alpha1.live.contracts import WHAT_TO_SHOW
-
-        for symbol in WHAT_TO_SHOW:
-            spec = get_contract_spec(symbol)
-            assert spec is not None, f"Missing ContractSpec for {symbol}"
+        """get_what_to_show() is consistent with _CONTRACT_SPECS for every symbol."""
+        for symbol, spec in _CONTRACT_SPECS.items():
+            assert get_what_to_show(symbol) == spec.what_to_show
 
     def test_forex_midpoint_consistency(self):
         """All forex instruments must use MIDPOINT data."""

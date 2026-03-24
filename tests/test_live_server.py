@@ -20,7 +20,7 @@ httpx = pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from alpha1.live.server import create_app  # noqa: E402
+from alpha1.live.server import ConnectionManager, create_app  # noqa: E402
 from alpha1.live.state import (  # noqa: E402
     OpenPositionRecord,
     PendingOrderRecord,
@@ -327,3 +327,18 @@ class TestPaperModeIndicator:
             response = c.get("/")
         assert response.status_code == 200
         assert "LIVE" in response.text
+
+
+# ---------------------------------------------------------------------------
+# ConnectionManager unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_disconnect_idempotent():
+    """disconnect() must not raise ValueError when called twice on the same ws."""
+    manager = ConnectionManager()
+    ws = MagicMock()
+    # Manually register without going through async connect
+    manager._connections.append(ws)
+    manager.disconnect(ws)  # first call removes it
+    manager.disconnect(ws)  # second call must be a no-op, not raise

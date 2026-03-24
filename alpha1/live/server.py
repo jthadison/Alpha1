@@ -68,19 +68,21 @@ class ConnectionManager:
         log.debug("WebSocket connected; total connections: %d", len(self._connections))
 
     def disconnect(self, ws: WebSocket) -> None:
-        self._connections.remove(ws)
+        if ws in self._connections:
+            self._connections.remove(ws)
         log.debug("WebSocket disconnected; total connections: %d", len(self._connections))
 
     async def broadcast(self, message: dict) -> None:
         """Send a JSON message to all connected clients, removing dead connections."""
-        dead: list[WebSocket] = []
-        for ws in list(self._connections):
-            try:
-                await ws.send_json(message)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            if ws in self._connections:
+        if not self._connections:
+            return
+        snapshot = list(self._connections)
+        results = await asyncio.gather(
+            *[ws.send_json(message) for ws in snapshot],
+            return_exceptions=True,
+        )
+        for ws, result in zip(snapshot, results, strict=False):
+            if isinstance(result, Exception) and ws in self._connections:
                 self._connections.remove(ws)
 
     @property

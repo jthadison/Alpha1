@@ -35,6 +35,7 @@ Post-launch fixes:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -90,6 +91,7 @@ class OpenPosition:
     sl_trade: object | None  # ib_async Trade; None for recovered positions without known bracket
     tp_trade: object | None  # ib_async Trade; None for recovered positions without known bracket
     signal_timestamp: pd.Timestamp | None = None
+    limit_entry_price: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -197,8 +199,11 @@ class LiveEngine:
         except asyncio.CancelledError:
             await self.stop()
         except Exception:
-            log.exception("Unexpected error in run_forever — engine will attempt to keep running.")
-            # Do not re-raise: let asyncio.gather's sibling (uvicorn) keep the web server alive.
+            log.exception("Unexpected error in run_forever — shutting down engine.")
+            self._running = False
+            # Best-effort cleanup; don't re-raise so uvicorn sibling task stays up
+            with contextlib.suppress(Exception):
+                await self.stop()
 
     # ------------------------------------------------------------------
     # IBKR connection lifecycle events
@@ -250,13 +255,23 @@ class LiveEngine:
 
         instrument = INSTRUMENT_REGISTRY[symbol]
         df_5m = data_dict["5min"]
-        if df_5m.empty:
+        if len(df_5m) < 2:
             return
 
         current_time = df_5m.index[-1]
 
         # 1. Generate signals using the exact same function as the backtest.
         all_signals = generate_signals(data_dict, self.config)
+
+        # Skip signal detection if account equity is unavailable (IBKR reconnect window).
+        # Don't add to _known_signals — allow retry on the next bar.
+        if self.broker.get_equity() <= 0:
+            log.warning(
+                "%s: equity=0.0 (IBKR reconnecting?); deferring %d signal(s) to next bar.",
+                symbol,
+                len(all_signals),
+            )
+            all_signals = []
 
         # 2. Deduplicate: find signals not yet processed for this instrument.
         known = self._known_signals.setdefault(symbol, set())
@@ -445,8 +460,18 @@ class LiveEngine:
                     await self._handle_fill(symbol, po)
                 else:
                     self.broker.cancel_bracket(po.parent_trade, po.tp_trade, po.sl_trade)
-                    await self.state.update_pending_order_status(po.id, "EXPIRED")
-                    self._emit_event("order_expired", {"symbol": symbol, "id": po.id})
+                    await asyncio.sleep(0)  # allow ib_async to process incoming fill event
+                    if po.parent_trade.orderStatus.status == "Filled":
+                        log.warning(
+                            "%s: order %s filled during cancel window — position created WITHOUT bracket. "
+                            "Add stop protection manually in IBKR.",
+                            symbol,
+                            po.id,
+                        )
+                        await self._handle_fill_naked(symbol, po)
+                    else:
+                        await self.state.update_pending_order_status(po.id, "EXPIRED")
+                        self._emit_event("order_expired", {"symbol": symbol, "id": po.id})
                 continue
 
             # -- FVG invalidation: cancel if price breaches the cancel level --
@@ -462,11 +487,21 @@ class LiveEngine:
                     await self._handle_fill(symbol, po)
                 else:
                     self.broker.cancel_bracket(po.parent_trade, po.tp_trade, po.sl_trade)
-                    await self.state.update_pending_order_status(po.id, "CANCELLED")
-                    self._emit_event(
-                        "order_cancelled",
-                        {"symbol": symbol, "id": po.id, "reason": "FVG_BREACHED"},
-                    )
+                    await asyncio.sleep(0)  # allow ib_async to process incoming fill event
+                    if po.parent_trade.orderStatus.status == "Filled":
+                        log.warning(
+                            "%s: order %s filled during cancel window — position created WITHOUT bracket. "
+                            "Add stop protection manually in IBKR.",
+                            symbol,
+                            po.id,
+                        )
+                        await self._handle_fill_naked(symbol, po)
+                    else:
+                        await self.state.update_pending_order_status(po.id, "CANCELLED")
+                        self._emit_event(
+                            "order_cancelled",
+                            {"symbol": symbol, "id": po.id, "reason": "FVG_BREACHED"},
+                        )
                 continue
 
             if sig.direction == "SHORT" and current_bar["high"] > sig.cancel_price:
@@ -481,11 +516,21 @@ class LiveEngine:
                     await self._handle_fill(symbol, po)
                 else:
                     self.broker.cancel_bracket(po.parent_trade, po.tp_trade, po.sl_trade)
-                    await self.state.update_pending_order_status(po.id, "CANCELLED")
-                    self._emit_event(
-                        "order_cancelled",
-                        {"symbol": symbol, "id": po.id, "reason": "FVG_BREACHED"},
-                    )
+                    await asyncio.sleep(0)  # allow ib_async to process incoming fill event
+                    if po.parent_trade.orderStatus.status == "Filled":
+                        log.warning(
+                            "%s: order %s filled during cancel window — position created WITHOUT bracket. "
+                            "Add stop protection manually in IBKR.",
+                            symbol,
+                            po.id,
+                        )
+                        await self._handle_fill_naked(symbol, po)
+                    else:
+                        await self.state.update_pending_order_status(po.id, "CANCELLED")
+                        self._emit_event(
+                            "order_cancelled",
+                            {"symbol": symbol, "id": po.id, "reason": "FVG_BREACHED"},
+                        )
                 continue
 
             # -- Filled: parent limit order executed by IBKR --
@@ -503,14 +548,32 @@ class LiveEngine:
     # Fill → open position transition
     # ------------------------------------------------------------------
 
-    async def _handle_fill(self, symbol: str, po: PendingOrder) -> None:
+    async def _handle_fill(self, symbol: str, po: PendingOrder, *, naked: bool = False) -> None:
         """
         Handle limit order fill: transition from pending order to open position.
 
         Records fill price and schedules session-end exit if configured.
+        Pass naked=True when the bracket children were already cancelled (TOCTOU race).
         """
+        # Guard: if we somehow receive two fills for the same symbol, cancel the
+        # duplicate rather than overwriting an already-tracked position.
+        if symbol in self._positions:
+            log.warning(
+                "%s: fill on %s but position already tracked — cancelling duplicate bracket.",
+                symbol,
+                po.id,
+            )
+            if not naked:
+                self.broker.cancel_order(po.tp_trade)
+                self.broker.cancel_order(po.sl_trade)
+            await self.state.update_pending_order_status(po.id, "CANCELLED")
+            return
+
         fill_price = po.parent_trade.orderStatus.avgFillPrice
         fill_time = datetime.now(UTC)
+
+        sl_trade = None if naked else po.sl_trade
+        tp_trade = None if naked else po.tp_trade
 
         position = OpenPosition(
             id=po.id,
@@ -522,9 +585,10 @@ class LiveEngine:
             initial_stop_price=po.actual_stop,
             target_price=po.signal.target_price,
             size=po.size,
-            sl_trade=po.sl_trade,
-            tp_trade=po.tp_trade,
+            sl_trade=sl_trade,
+            tp_trade=tp_trade,
             signal_timestamp=po.signal.timestamp,
+            limit_entry_price=po.signal.entry_price,
         )
         self._positions[symbol] = position
 
@@ -541,8 +605,8 @@ class LiveEngine:
                 initial_stop_price=position.initial_stop_price,
                 target_price=position.target_price,
                 size=position.size,
-                ibkr_sl_id=po.sl_trade.order.orderId,
-                ibkr_tp_id=po.tp_trade.order.orderId,
+                ibkr_sl_id=sl_trade.order.orderId if sl_trade is not None else None,
+                ibkr_tp_id=tp_trade.order.orderId if tp_trade is not None else None,
             )
         )
         await self.state.update_pending_order_status(po.id, "FILLED")
@@ -572,6 +636,10 @@ class LiveEngine:
                 "size": po.size,
             },
         )
+
+    async def _handle_fill_naked(self, symbol: str, po: PendingOrder) -> None:
+        """Fill handler for TOCTOU race: bracket was cancelled before fill was noticed."""
+        await self._handle_fill(symbol, po, naked=True)
 
     # ------------------------------------------------------------------
     # Breakeven management
@@ -694,20 +762,22 @@ class LiveEngine:
 
         if close_trade.isDone():
             exit_price = close_trade.orderStatus.avgFillPrice
+            await self._record_completed_trade(pos, exit_price, "TIME_EXIT")
+            del self._positions[symbol]
+            self._emit_event(
+                "position_closed",
+                {"symbol": symbol, "reason": "SESSION_END", "exit_price": exit_price},
+            )
         else:
-            log.error(
-                "%s: market close order not filled after 6s — manual intervention required.",
+            log.critical(
+                "%s: market close order not filled after 6s — MANUAL INTERVENTION REQUIRED. "
+                "Position remains tracked; no new orders will be placed until manually resolved.",
                 symbol,
             )
-            exit_price = pos.entry_price  # fallback for record keeping
-
-        await self._record_completed_trade(pos, exit_price, "TIME_EXIT")
-        del self._positions[symbol]
-
-        self._emit_event(
-            "position_closed",
-            {"symbol": symbol, "reason": "SESSION_END", "exit_price": exit_price},
-        )
+            self._emit_event(
+                "manual_intervention_required",
+                {"symbol": symbol, "reason": "SESSION_END_TIMEOUT"},
+            )
 
     # ------------------------------------------------------------------
     # IBKR order status handler (SL / TP fills)
@@ -787,8 +857,14 @@ class LiveEngine:
         risk = abs(pos.entry_price - pos.initial_stop_price) * instrument.point_value * pos.size
         r_multiple = pnl / risk if risk > 0 else 0.0
 
-        expected_exit = pos.target_price if reason == "TARGET" else pos.stop_price
-        exit_slippage = exit_price - expected_exit
+        # For TIME_EXIT, there's no pre-set target price — the exit is a forced market close.
+        if reason == "TIME_EXIT":
+            expected_exit = exit_price
+            exit_slippage = 0.0
+        else:
+            expected_exit = pos.target_price if reason == "TARGET" else pos.stop_price
+            exit_slippage = exit_price - expected_exit
+        fill_slippage_entry = pos.entry_price - pos.limit_entry_price
 
         await self.state.save_trade(
             TradeRecord(
@@ -796,7 +872,7 @@ class LiveEngine:
                 direction=pos.direction,
                 signal_timestamp=str(pos.signal_timestamp) if pos.signal_timestamp is not None else None,
                 entry_time=pos.entry_time.isoformat(),
-                entry_price_limit=pos.entry_price,  # bracket order: limit IS the target
+                entry_price_limit=pos.limit_entry_price,  # actual limit price requested
                 entry_price_filled=pos.entry_price,
                 exit_time=datetime.now(UTC).isoformat(),
                 exit_price_expected=expected_exit,
@@ -804,7 +880,7 @@ class LiveEngine:
                 exit_reason=reason,
                 pnl=pnl,
                 r_multiple=r_multiple,
-                fill_slippage_entry=0.0,  # updated from fill event; entry slippage logged separately
+                fill_slippage_entry=fill_slippage_entry,
                 fill_slippage_exit=exit_slippage,
             )
         )
@@ -902,7 +978,7 @@ class LiveEngine:
                 entry_price=entry_price,
                 entry_time=datetime.now(UTC),
                 stop_price=stop_price,
-                initial_stop_price=stop_price,
+                initial_stop_price=db_pos.initial_stop_price if db_pos is not None else stop_price,
                 target_price=target_price,
                 size=size,
                 sl_trade=sl_trade,

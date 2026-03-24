@@ -160,6 +160,10 @@ class StateManager:
         """Open (or create) the SQLite database and run DDL."""
         import aiosqlite
 
+        if self._db is not None:
+            await self._db.close()
+            self._db = None
+
         self._db = await aiosqlite.connect(db_path)
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(_DDL)
@@ -350,12 +354,12 @@ class StateManager:
         async with db.execute(
             """
             SELECT
-                COUNT(*)                          AS total_trades,
-                AVG(fill_slippage_entry)          AS avg_entry_slippage,
-                AVG(ABS(fill_slippage_exit))      AS avg_exit_slippage,
-                SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) AS winners,
-                AVG(r_multiple)                   AS avg_r,
-                SUM(pnl)                          AS total_pnl
+                COUNT(*)                                                          AS total_trades,
+                AVG(CASE WHEN exit_reason != 'TIME_EXIT' THEN fill_slippage_entry END) AS avg_entry_slippage,
+                AVG(CASE WHEN exit_reason != 'TIME_EXIT' THEN ABS(fill_slippage_exit) END) AS avg_exit_slippage,
+                SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END)                        AS winners,
+                AVG(r_multiple)                                                  AS avg_r,
+                SUM(pnl)                                                         AS total_pnl
             FROM trade_history
             """
         ) as cursor:
