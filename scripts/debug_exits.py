@@ -1,9 +1,9 @@
-import pandas as pd
-from alpha1.config.settings import StrategyConfig
-from alpha1.config.instruments import INSTRUMENT_REGISTRY
-from alpha1.data.loader import load_csv, resample_multi_tf
 from alpha1.backtest.engine import run_backtest
 from alpha1.backtest.metrics import calculate_metrics
+from alpha1.config.instruments import INSTRUMENT_REGISTRY
+from alpha1.config.settings import StrategyConfig
+from alpha1.data.loader import load_csv, resample_multi_tf
+
 
 def main():
     df = load_csv("data/EURUSD_M1_formatted.csv", start_date="2024-01-01")

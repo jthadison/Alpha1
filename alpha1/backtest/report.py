@@ -76,7 +76,6 @@ def generate_report(portfolio: Any, metrics: dict[str, Any], out_dir: str = "out
         print(f"Saved equity curve to {eq_csv}")
 
     # 4. Save Metrics JSON
-    import json
     import numpy as np
     class NumpyEncoder(json.JSONEncoder):
         def default(self, obj):
@@ -86,7 +85,7 @@ def generate_report(portfolio: Any, metrics: dict[str, Any], out_dir: str = "out
                 return float(obj)
             if isinstance(obj, np.ndarray):
                 return obj.tolist()
-            return super(NumpyEncoder, self).default(obj)
+            return super().default(obj)
 
     metrics_json = out_path / "metrics.json"
     with open(metrics_json, "w") as f:

@@ -142,7 +142,7 @@ INSTRUMENT_REGISTRY: dict[str, InstrumentSpec] = {
     ),
     # Spot Gold (XAUUSD via Forex broker)
     # price in USD/oz; point_value=100 assumes a 100-oz standard lot.
-    # tick_size=0.01 → tick value = 0.01 × 100 = $1.00 per lot.
+     # tick_size=0.01 → tick value = 0.01 x 100 = $1.00 per lot.
     "XAUUSD": InstrumentSpec(
         symbol="XAUUSD",
         tick_size=0.01,

@@ -92,7 +92,6 @@ class SessionDetector:
         n = len(self.df)
         biases = np.full(n, SessionBias.NO_TRADE.value, dtype=object)
 
-        self.df['close'].values
         highs = self.df['high'].values
         lows = self.df['low'].values
 

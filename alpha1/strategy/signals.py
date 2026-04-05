@@ -12,7 +12,7 @@ Therefore generate_signals:
   2. For each FVG, immediately emits a Signal (= a pending limit order).
   3. Entry price = FVG midpoint.
   4. Stop price  = OB extreme (structural stop), clipped to FVG boundary.
-  5. Target      = midpoint ± risk × config.exit.target_min_rr  (fixed at generation).
+   5. Target      = midpoint ± risk x config.exit.target_min_rr  (fixed at generation).
   6. Cancel price = FVG bottom (longs) / top (shorts):
        if price breaks this level the imbalance is filled and the setup is dead.
 

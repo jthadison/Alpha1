@@ -19,7 +19,19 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-timeout>=2.0.0",
     "ruff>=0.1.0"
+]
+live = [
+    "ib_async>=2.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.20.0",
+    "jinja2>=3.1.0",
+    "websockets>=10.0",
+    "aiosqlite>=0.17.0",
+    "httpx>=0.24.0",
+    "python-multipart>=0.0.6",
 ]
 
 [tool.setuptools.packages.find]
@@ -37,21 +49,29 @@ ignore = []
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-ra -q --cov=alpha1 --cov-report=term-missing"
+addopts = "-ra -q --cov=alpha1 --cov-report=term-missing --timeout=120"
 testpaths = [
     "tests",
 ]
 pythonpath = ["."]
+asyncio_mode = "auto"
 
 [tool.coverage.run]
 source = ["alpha1"]
 omit = [
     "alpha1/analysis/*",
     "tests/*",
-    "alpha1/__main__.py"
+    "alpha1/__main__.py",
+    # live/* requires an IBKR connection; engine/broker/feed/server are covered by integration tests.
+    # state.py and contracts.py have dedicated unit tests and are NOT omitted.
+    "alpha1/live/broker.py",
+    "alpha1/live/engine.py",
+    "alpha1/live/feed.py",
+    "alpha1/live/server.py",
 ]
 
 [tool.coverage.report]
 # portfolio_multi.py is integration-level; its loop only fires with real signal data.
 # Component unit tests cover initialization and contracts; integration is run_portfolio.py.
+# live/ modules needing IBKR are omitted from coverage; state.py + contracts.py have unit tests.
 fail_under = 65

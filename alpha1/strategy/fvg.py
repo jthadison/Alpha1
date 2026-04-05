@@ -97,11 +97,14 @@ def detect_fvgs(df: pd.DataFrame,
     # For each FVG, find the first bar after its formation where it is fully mitigated
     # Mitigation means price reaches the full FVG or just touches it?
     # Usually "mitigation" means price returns into it.
-    # Plan says: "mark FVG as filled when price returns through it" (through meaning closes the gap completely or touches?)
-    # "unmitigated (price hasn't returned to fill it yet)... Price retraces into the FVG zone. Entry at FVG midpoint or on a confirmation candle close within the FVG."
+    # Plan says: "mark FVG as filled when price returns through it"
+    # (through meaning closes the gap completely or touches?)
+    # "unmitigated (price has not returned to fill it yet)... Price retraces into the FVG zone."
+    # "Entry at FVG midpoint or on a confirmation candle close within the FVG."
     # So if price goes completely through it, it's fully mitigated and invalidated.
     # Let's mark it mitigated if price touches the opposite side of the FVG, OR just touches the FVG?
-    # Usually, a FVG is "filled" when price reaches the opposite end (e.g. for Bullish, price drops to bottom = c1_high).
+    # Usually, a FVG is "filled" when price reaches the opposite end
+    # (e.g. for Bullish, price drops to bottom = c1_high).
     # Let's track when price touches the midpoint as an entry trigger, but it's "mitigated" (invalidated)
     # if price drops below the bottom (for bullish) or above the top (for bearish).
     # Actually, a common rule is: if it's completely filled, it's mitigated.

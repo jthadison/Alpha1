@@ -88,7 +88,16 @@ class Portfolio:
             else:
                 return price + spread_price + slippage_price
 
-    def open_trade(self, direction: str, time: pd.Timestamp, price: float, stop: float, target: float, size: float, instrument: InstrumentSpec) -> Trade:
+    def open_trade(
+        self,
+        direction: str,
+        time: pd.Timestamp,
+        price: float,
+        stop: float,
+        target: float,
+        size: float,
+        instrument: InstrumentSpec,
+    ) -> Trade:
         adjusted_price = self.apply_costs(price, direction, is_entry=True, instrument=instrument)
 
         trade = Trade(
@@ -103,7 +112,15 @@ class Portfolio:
         )
         return trade
 
-    def close_trade(self, trade: Trade, time: pd.Timestamp, price: float, reason: ExitReason, bars_held: int, instrument: InstrumentSpec):
+    def close_trade(
+        self,
+        trade: Trade,
+        time: pd.Timestamp,
+        price: float,
+        reason: ExitReason,
+        bars_held: int,
+        instrument: InstrumentSpec,
+    ):
         adjusted_price = self.apply_costs(price, trade.direction, is_entry=False, instrument=instrument)
 
         trade.exit_time = time
@@ -120,7 +137,7 @@ class Portfolio:
 
         trade.pnl = (price_diff * instrument.point_value * trade.size) - instrument.commission_per_trade
 
-        # Calculate R-multiple based on initial risk (including entry costs, but stop price usually doesn't have costs baked in until exit)
+        # Calculate R-multiple based on initial risk (entry costs included; stop price is raw)
         # We define initial risk based on entry_price_adjusted and stop_price.
         if trade.direction == "LONG":
             risk_price = trade.entry_price_adjusted - trade.initial_stop_price

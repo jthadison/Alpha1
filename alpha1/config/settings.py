@@ -16,7 +16,7 @@ class SessionConfig:
 
     def get_time(self, attr: str) -> time:
         val = getattr(self, attr)
-        h, m = map(int, val.split(':'))
+        h, m = map(int, val.split(":"))
         return time(hour=h, minute=m)
 
 
@@ -51,6 +51,27 @@ class RiskConfig:
 
 
 @dataclass
+class LiveConfig:
+    """
+    Configuration for the live trading engine and IBKR connection.
+
+    Default port 4002 = IB Gateway paper trading.
+    Port 4001 = IB Gateway live.  Port 7497/7496 = TWS paper/live.
+    paper=True by default: a loud warning is printed at startup if paper=False.
+    """
+
+    host: str = "127.0.0.1"
+    port: int = 4002
+    client_id: int = 1
+    paper: bool = True
+    instruments: list[str] = field(default_factory=lambda: ["XAUUSD", "MYM", "MNQ"])
+    db_path: str = "alpha1_live.db"
+    web_host: str = "127.0.0.1"
+    web_port: int = 8080
+    history_bars: int = 2000
+
+
+@dataclass
 class BacktestConfig:
     start_date: str = "2020-01-01"
     end_date: str = "2025-01-01"
@@ -64,19 +85,21 @@ class StrategyConfig:
     exit: ExitConfig = field(default_factory=ExitConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
     backtest: BacktestConfig = field(default_factory=BacktestConfig)
+    live: LiveConfig = field(default_factory=LiveConfig)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> 'StrategyConfig':
+    def from_dict(cls, data: dict[str, Any]) -> "StrategyConfig":
         return cls(
             session=SessionConfig(**data.get("session", {})),
             entry=EntryConfig(**data.get("entry", {})),
             exit=ExitConfig(**data.get("exit", {})),
             risk=RiskConfig(**data.get("risk", {})),
-            backtest=BacktestConfig(**data.get("backtest", {}))
+            backtest=BacktestConfig(**data.get("backtest", {})),
+            live=LiveConfig(**data.get("live", {})),
         )
 
     @classmethod
-    def from_json(cls, path: str) -> 'StrategyConfig':
+    def from_json(cls, path: str) -> "StrategyConfig":
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return cls.from_dict(data)

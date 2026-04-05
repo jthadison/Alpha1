@@ -15,7 +15,6 @@ import numpy as np
 import pandas as pd
 from scipy import stats as scipy_stats
 
-
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _daily_returns(equity_curve: list[float], equity_dates: list[pd.Timestamp]) -> pd.Series:
@@ -96,7 +95,7 @@ def calculate_metrics(
     expectancy_r = df["r"].mean()
 
     # SQN — System Quality Number (Van Tharp)
-    # sqrt(n) × mean_R / std_R
+     # sqrt(n) x mean_R / std_R
     # Interpretation: >2 Good, >3 Excellent, >5 World-class
     r_std = df["r"].std()
     sqn   = np.sqrt(len(df)) * expectancy_r / r_std if r_std > 0 else 0.0
@@ -163,7 +162,7 @@ def calculate_metrics(
         dr_kurt = float(scipy_stats.kurtosis(dr))
 
         # K-Ratio — measures consistency of equity curve growth.
-        # Regresses ln(equity) on time; K = slope / (std_error × sqrt(n)).
+         # Regresses ln(equity) on time; K = slope / (std_error x sqrt(n)).
         # Higher is better: >1.0 is considered acceptable, >2.0 is strong.
         ln_eq      = np.log(pd.Series(equity_curve[1:]).values)
         x          = np.arange(len(ln_eq))
